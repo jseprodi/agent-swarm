@@ -3,8 +3,10 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { Swarm } from '../../../src/index.js';
 import logger from '../../../src/utils/logger.js';
+import { validateParams } from '../middleware/validation.js';
 
 export function agentRoutes(getSwarm: () => Swarm): Router {
   const router = Router();
@@ -27,7 +29,9 @@ export function agentRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get agent details
-  router.get('/:id', (req: Request, res: Response) => {
+  router.get('/:id', validateParams(z.object({
+    id: z.string().min(1),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const agentRegistry = swarm.getAgentRegistry();
@@ -56,7 +60,9 @@ export function agentRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get agent status
-  router.get('/:id/status', (req: Request, res: Response) => {
+  router.get('/:id/status', validateParams(z.object({
+    id: z.string().min(1),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const agentRegistry = swarm.getAgentRegistry();
@@ -92,7 +98,9 @@ export function agentRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get tasks assigned to agent
-  router.get('/:id/tasks', (req: Request, res: Response) => {
+  router.get('/:id/tasks', validateParams(z.object({
+    id: z.string().min(1),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const taskManager = swarm.getTaskManager();

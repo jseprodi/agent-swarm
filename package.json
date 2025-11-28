@@ -26,7 +26,13 @@
     "clean": "npm run clean:core && npm run clean:packages",
     "clean:core": "cd src && rm -rf dist || rmdir /s /q dist || true",
     "clean:packages": "npm run clean --workspaces --if-present",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "keywords": [
     "agent",
@@ -35,8 +41,16 @@
     "orchestrator",
     "llm"
   ],
-  "author": "",
+  "author": "Joshua Seprodi",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/agent-swarm.git"
+  },
+  "homepage": "https://github.com/your-org/agent-swarm#readme",
+  "bugs": {
+    "url": "https://github.com/your-org/agent-swarm/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@anthropic-ai/sdk": "^0.20.0",
@@ -50,7 +64,16 @@
     "@types/uuid": "^9.0.7",
     "typescript": "^5.3.3",
     "concurrently": "^8.2.2",
-    "cross-env": "^7.0.3"
+    "cross-env": "^7.0.3",
+    "vitest": "^4.0.14",
+    "@vitest/coverage-v8": "^4.0.14",
+    "supertest": "^7.1.3",
+    "@types/supertest": "^6.0.2",
+    "nock": "^13.4.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "prettier": "^3.2.4"
   }
 }
 

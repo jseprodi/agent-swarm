@@ -3,21 +3,19 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { Swarm } from '../../../src/index.js';
 import type { Task, TaskResult } from '../../../src/core/types.js';
 import logger from '../../../src/utils/logger.js';
+import { validateBody, validateQuery, validateParams, validationSchemas } from '../middleware/validation.js';
 
 export function taskRoutes(getSwarm: () => Swarm): Router {
   const router = Router();
 
   // Create new task
-  router.post('/', async (req: Request, res: Response) => {
+  router.post('/', validateBody(validationSchemas.createTask), async (req: Request, res: Response) => {
     try {
       const { description, metadata } = req.body;
-
-      if (!description || typeof description !== 'string') {
-        return res.status(400).json({ error: 'Task description is required' });
-      }
 
       const swarm = getSwarm();
       const result = await swarm.execute(description, metadata);
@@ -33,7 +31,10 @@ export function taskRoutes(getSwarm: () => Swarm): Router {
   });
 
   // List all tasks
-  router.get('/', (req: Request, res: Response) => {
+  router.get('/', validateQuery(z.object({
+    status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'cancelled']).optional(),
+    agentId: z.string().optional(),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const taskManager = swarm.getTaskManager();
@@ -64,7 +65,9 @@ export function taskRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get task details
-  router.get('/:id', (req: Request, res: Response) => {
+  router.get('/:id', validateParams(z.object({
+    id: z.string().uuid(),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const taskManager = swarm.getTaskManager();
@@ -95,7 +98,9 @@ export function taskRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get task result
-  router.get('/:id/result', (req: Request, res: Response) => {
+  router.get('/:id/result', validateParams(z.object({
+    id: z.string().uuid(),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const taskManager = swarm.getTaskManager();
@@ -116,7 +121,9 @@ export function taskRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Cancel task
-  router.post('/:id/cancel', (req: Request, res: Response) => {
+  router.post('/:id/cancel', validateParams(z.object({
+    id: z.string().uuid(),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const taskManager = swarm.getTaskManager();

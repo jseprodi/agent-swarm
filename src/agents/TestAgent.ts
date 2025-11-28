@@ -4,11 +4,11 @@
 
 import { BaseAgent } from '../core/Agent.js';
 import type { Task, TaskResult } from '../core/types.js';
-import { LLMIntegration } from '../cursor/LLMIntegration.js';
+import type { ILLMProvider } from '../llm/types.js';
 import logger from '../utils/logger.js';
 
 export class TestAgent extends BaseAgent {
-  constructor(llm?: LLMIntegration) {
+  constructor(llm?: ILLMProvider) {
     super(
       'test-agent',
       'Test Agent',

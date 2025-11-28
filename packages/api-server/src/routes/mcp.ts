@@ -3,8 +3,10 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { Swarm } from '../../../src/index.js';
 import logger from '../../../src/utils/logger.js';
+import { validateBody, validateParams, validationSchemas } from '../middleware/validation.js';
 
 export function mcpRoutes(getSwarm: () => Swarm): Router {
   const router = Router();
@@ -27,7 +29,9 @@ export function mcpRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get server details
-  router.get('/servers/:id', (req: Request, res: Response) => {
+  router.get('/servers/:id', validateParams(z.object({
+    id: z.string().min(1),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const mcpManager = swarm.getMCPManager();
@@ -55,13 +59,9 @@ export function mcpRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Connect to server
-  router.post('/servers/connect', async (req: Request, res: Response) => {
+  router.post('/servers/connect', validateBody(validationSchemas.connectServer), async (req: Request, res: Response) => {
     try {
       const { serverId } = req.body;
-
-      if (!serverId) {
-        return res.status(400).json({ error: 'serverId is required' });
-      }
 
       const swarm = getSwarm();
       const mcpManager = swarm.getMCPManager();
@@ -84,7 +84,9 @@ export function mcpRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Disconnect server
-  router.post('/servers/:id/disconnect', async (req: Request, res: Response) => {
+  router.post('/servers/:id/disconnect', validateParams(z.object({
+    id: z.string().min(1),
+  })), async (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const mcpManager = swarm.getMCPManager();
@@ -104,7 +106,7 @@ export function mcpRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Trigger discovery
-  router.post('/servers/discover', async (req: Request, res: Response) => {
+  router.post('/servers/discover', validateBody(validationSchemas.discoverServers), async (req: Request, res: Response) => {
     try {
       const { capabilities, keywords } = req.body;
 
@@ -139,7 +141,9 @@ export function mcpRoutes(getSwarm: () => Swarm): Router {
   });
 
   // Get server capabilities
-  router.get('/servers/:id/capabilities', (req: Request, res: Response) => {
+  router.get('/servers/:id/capabilities', validateParams(z.object({
+    id: z.string().min(1),
+  })), (req: Request, res: Response) => {
     try {
       const swarm = getSwarm();
       const mcpManager = swarm.getMCPManager();

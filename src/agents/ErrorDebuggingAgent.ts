@@ -6,6 +6,19 @@ import { BaseAgent } from '../core/Agent.js';
 import type { Task, TaskResult } from '../core/types.js';
 import type { ILLMProvider } from '../llm/types.js';
 import logger from '../utils/logger.js';
+import {
+  parseErrorAnalysis,
+  parseNetworkAnalysis,
+  parsePreventionAnalysis,
+  categorizeError,
+  categorizeNetworkError,
+  calculateRiskLevel,
+} from './helpers/errorParsing.js';
+import {
+  findConsoleMCP,
+  findNetworkMCP,
+  findFileOperationMCP,
+} from './helpers/mcpFinders.js';
 
 export class ErrorDebuggingAgent extends BaseAgent {
   constructor(llm?: ILLMProvider) {
@@ -87,10 +100,10 @@ Format your response with clear sections and code examples.`;
       temperature: 0.2, // Lower temperature for more accurate debugging
     });
 
-    const analysis = this.parseErrorAnalysis(llmResponse.content);
+    const analysis = parseErrorAnalysis(llmResponse.content);
 
     // Try to get console errors via MCP if available
-    const consoleMCP = this.findConsoleMCP();
+    const consoleMCP = findConsoleMCP(this.mcpClients);
     if (consoleMCP && !errorMessage) {
       try {
         const client = this.getMCPClient(consoleMCP);
@@ -109,7 +122,7 @@ Format your response with clear sections and code examples.`;
       task.id,
       {
         ...analysis,
-        errorType: this.categorizeError(errorMessage || ''),
+        errorType: categorizeError(errorMessage || ''),
         fixes: analysis.fixes || [],
         rootCause: analysis.rootCause || '',
       },
@@ -152,10 +165,10 @@ Format your response with clear sections and code examples.`;
       temperature: 0.2,
     });
 
-    const analysis = this.parseNetworkAnalysis(llmResponse.content);
+    const analysis = parseNetworkAnalysis(llmResponse.content);
 
     // Try to get network logs via MCP if available
-    const networkMCP = this.findNetworkMCP();
+    const networkMCP = findNetworkMCP(this.mcpClients);
     if (networkMCP && !requestUrl) {
       try {
         const client = this.getMCPClient(networkMCP);
@@ -174,7 +187,7 @@ Format your response with clear sections and code examples.`;
       task.id,
       {
         ...analysis,
-        errorType: this.categorizeNetworkError(statusCode),
+        errorType: categorizeNetworkError(statusCode),
         fixes: analysis.fixes || [],
         suggestedHeaders: analysis.suggestedHeaders || {},
       },
@@ -194,7 +207,7 @@ Format your response with clear sections and code examples.`;
 
     // Try to read files via MCP if paths provided
     if (codeFiles && codeFiles.length > 0) {
-      const fileMCP = this.findFileOperationMCP();
+      const fileMCP = findFileOperationMCP(this.mcpClients);
       if (fileMCP) {
         try {
           const client = this.getMCPClient(fileMCP);
@@ -251,7 +264,7 @@ Format as a structured analysis.`;
       temperature: 0.2,
     });
 
-    const analysis = this.parsePreventionAnalysis(llmResponse.content);
+    const analysis = parsePreventionAnalysis(llmResponse.content);
 
     return this.createSuccessResult(
       task.id,
@@ -259,7 +272,7 @@ Format as a structured analysis.`;
         ...analysis,
         potentialIssues: analysis.issues || [],
         recommendations: analysis.recommendations || [],
-        riskLevel: this.calculateRiskLevel(analysis.issues || []),
+        riskLevel: calculateRiskLevel(analysis.issues || []),
       },
       {
         promptTokens: llmResponse.usage?.promptTokens,
@@ -273,222 +286,5 @@ Format as a structured analysis.`;
     return await this.debugConsoleError(task);
   }
 
-  private parseErrorAnalysis(content: string): any {
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      logger.warn('Failed to parse error analysis as JSON', error);
-    }
-
-    return {
-      rootCause: this.extractSection(content, 'root cause', 'explanation'),
-      fixes: this.extractFixes(content),
-      explanation: this.extractSection(content, 'explanation', 'fix'),
-    };
-  }
-
-  private parseNetworkAnalysis(content: string): any {
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      logger.warn('Failed to parse network analysis as JSON', error);
-    }
-
-    return {
-      problem: this.extractSection(content, 'problem', 'fix'),
-      fixes: this.extractFixes(content),
-      suggestedHeaders: this.extractHeaders(content),
-    };
-  }
-
-  private parsePreventionAnalysis(content: string): any {
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      logger.warn('Failed to parse prevention analysis as JSON', error);
-    }
-
-    return {
-      issues: this.extractIssuesList(content),
-      recommendations: this.extractRecommendations(content),
-    };
-  }
-
-  private extractSection(content: string, startKeyword: string, endKeyword: string): string {
-    const lowerContent = content.toLowerCase();
-    const startIdx = lowerContent.indexOf(startKeyword);
-    const endIdx = lowerContent.indexOf(endKeyword, startIdx + startKeyword.length);
-    
-    if (startIdx !== -1) {
-      const end = endIdx !== -1 ? endIdx : startIdx + 500;
-      return content.substring(startIdx, end).trim();
-    }
-    
-    return '';
-  }
-
-  private extractFixes(content: string): string[] {
-    const fixes: string[] = [];
-    const lines = content.split('\n');
-    let inFixSection = false;
-
-    for (const line of lines) {
-      const lowerLine = line.toLowerCase();
-      if (lowerLine.includes('fix') || lowerLine.includes('solution')) {
-        inFixSection = true;
-      }
-      if (inFixSection && (line.trim().startsWith('-') || line.trim().startsWith('1.'))) {
-        fixes.push(line.trim());
-      }
-      if (inFixSection && lowerLine.includes('prevent') && fixes.length > 0) {
-        break;
-      }
-    }
-
-    return fixes;
-  }
-
-  private extractIssuesList(content: string): Array<{ issue: string; severity: string }> {
-    const issues: Array<{ issue: string; severity: string }> = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      if (line.trim().startsWith('-') || line.trim().match(/^\d+\./)) {
-        const severity = this.detectSeverity(line);
-        issues.push({
-          issue: line.trim(),
-          severity,
-        });
-      }
-    }
-
-    return issues;
-  }
-
-  private detectSeverity(line: string): string {
-    const lower = line.toLowerCase();
-    if (lower.includes('critical') || lower.includes('high')) return 'high';
-    if (lower.includes('medium') || lower.includes('moderate')) return 'medium';
-    if (lower.includes('low') || lower.includes('minor')) return 'low';
-    return 'medium';
-  }
-
-  private extractRecommendations(content: string): string[] {
-    const recommendations: string[] = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      const lower = line.toLowerCase();
-      if ((lower.includes('recommend') || lower.includes('should') || lower.includes('best practice')) && line.trim().length > 20) {
-        recommendations.push(line.trim());
-      }
-    }
-
-    return recommendations.slice(0, 10); // Limit to top 10
-  }
-
-  private extractHeaders(content: string): Record<string, string> {
-    const headers: Record<string, string> = {};
-    const headerMatch = content.match(/(?:headers?|request headers?)[:]\s*\n((?:\s*['"]?[\w-]+['"]?:\s*['"]?[^'"]+['"]?,?\s*\n?)+)/i);
-    
-    if (headerMatch) {
-      const headerLines = headerMatch[1].split('\n');
-      for (const line of headerLines) {
-        const match = line.match(/(['"]?)([\w-]+)\1:\s*(['"]?)([^'"]+)\3/);
-        if (match) {
-          headers[match[2]] = match[4];
-        }
-      }
-    }
-
-    return headers;
-  }
-
-  private categorizeError(errorMessage: string): string {
-    const lower = errorMessage.toLowerCase();
-    
-    if (lower.includes('undefined') || lower.includes('null')) return 'null_reference';
-    if (lower.includes('cannot read') || lower.includes('cannot access')) return 'property_access';
-    if (lower.includes('syntax')) return 'syntax_error';
-    if (lower.includes('type')) return 'type_error';
-    if (lower.includes('reference')) return 'reference_error';
-    if (lower.includes('async') || lower.includes('promise')) return 'async_error';
-    
-    return 'unknown';
-  }
-
-  private categorizeNetworkError(statusCode?: number): string {
-    if (!statusCode) return 'unknown';
-    
-    if (statusCode >= 200 && statusCode < 300) return 'success';
-    if (statusCode === 404) return 'not_found';
-    if (statusCode === 403 || statusCode === 401) return 'authentication';
-    if (statusCode === 500) return 'server_error';
-    if (statusCode === 0 || statusCode === -1) return 'network_error';
-    
-    return 'http_error';
-  }
-
-  private calculateRiskLevel(issues: Array<{ issue: string; severity: string }>): string {
-    const highCount = issues.filter(i => i.severity === 'high').length;
-    const mediumCount = issues.filter(i => i.severity === 'medium').length;
-    
-    if (highCount > 3) return 'critical';
-    if (highCount > 0 || mediumCount > 5) return 'high';
-    if (mediumCount > 0) return 'medium';
-    
-    return 'low';
-  }
-
-  private findConsoleMCP(): string | undefined {
-    for (const [serverId, client] of this.mcpClients.entries()) {
-      const capabilities = client.getCapabilities();
-      if (
-        capabilities.tools?.some(tool =>
-          ['get_console_errors', 'get_console_logs', 'console'].includes(tool)
-        )
-      ) {
-        return serverId;
-      }
-    }
-    return undefined;
-  }
-
-  private findNetworkMCP(): string | undefined {
-    for (const [serverId, client] of this.mcpClients.entries()) {
-      const capabilities = client.getCapabilities();
-      if (
-        capabilities.tools?.some(tool =>
-          ['get_network_logs', 'network_request', 'http'].includes(tool)
-        )
-      ) {
-        return serverId;
-      }
-    }
-    return undefined;
-  }
-
-  private findFileOperationMCP(): string | undefined {
-    for (const [serverId, client] of this.mcpClients.entries()) {
-      const capabilities = client.getCapabilities();
-      if (
-        capabilities.tools?.some(tool =>
-          ['read_file', 'write_file', 'list_directory'].includes(tool)
-        )
-      ) {
-        return serverId;
-      }
-    }
-    return undefined;
-  }
 }
 

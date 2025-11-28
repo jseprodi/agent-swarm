@@ -4,6 +4,7 @@
 
 import axios from 'axios';
 import type { MCPServerDiscoveryResult } from '../types.js';
+import { DEFAULT_REGISTRY_REQUEST_TIMEOUT_MS } from '../constants.js';
 import logger from '../../utils/logger.js';
 
 export interface MCPServerRegistryEntry {
@@ -268,7 +269,7 @@ export class RegistrySearch {
       const packageName = serverId.replace('npm:', '');
       try {
         const response = await axios.get(`${this.npmRegistryUrl}/${packageName}`, {
-          timeout: 5000,
+          timeout: DEFAULT_REGISTRY_REQUEST_TIMEOUT_MS,
         });
 
         const pkg = response.data?.versions?.[response.data['dist-tags']?.latest || Object.keys(response.data.versions || {})[0]];

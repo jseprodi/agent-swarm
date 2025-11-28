@@ -22,6 +22,13 @@ try {
     exit 1
 }
 
+# Check Node.js version (require 18+)
+$nodeMajorVersion = [int]($nodeVersion -replace 'v(\d+)\..*', '$1')
+if ($nodeMajorVersion -lt 18) {
+    Write-Host "Error: Node.js version 18+ is required. Current version: $nodeVersion" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host ""
 Write-Host "Installing dependencies..." -ForegroundColor Yellow
 npm install
@@ -46,5 +53,14 @@ Write-Host "Press Ctrl+C to stop all services" -ForegroundColor Yellow
 Write-Host ""
 
 # Start all services using npm dev script
-npm run dev
+try {
+    npm run dev
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Error: Failed to start development services" -ForegroundColor Red
+        exit 1
+    }
+} catch {
+    Write-Host "Error: Failed to start development services: $_" -ForegroundColor Red
+    exit 1
+}
 

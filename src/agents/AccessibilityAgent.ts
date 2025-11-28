@@ -6,6 +6,16 @@ import { BaseAgent } from '../core/Agent.js';
 import type { Task, TaskResult } from '../core/types.js';
 import type { ILLMProvider } from '../llm/types.js';
 import logger from '../utils/logger.js';
+import {
+  parseAuditReport,
+  extractChanges,
+  extractHTML,
+  calculateComplianceScore,
+} from './helpers/accessibilityParsing.js';
+import {
+  findAccessibilityMCP,
+  findFileOperationMCP,
+} from './helpers/mcpFinders.js';
 
 export class AccessibilityAgent extends BaseAgent {
   constructor(llm?: ILLMProvider) {
@@ -63,7 +73,7 @@ export class AccessibilityAgent extends BaseAgent {
 
     // Try to read HTML file via MCP if path provided
     if (!htmlToTest && htmlPath) {
-      const fileMCP = this.findFileOperationMCP();
+      const fileMCP = findFileOperationMCP(this.mcpClients);
       if (fileMCP) {
         try {
           const client = this.getMCPClient(fileMCP);
@@ -78,7 +88,7 @@ export class AccessibilityAgent extends BaseAgent {
     }
 
     // Try to use accessibility testing MCP server if available
-    const a11yMCP = this.findAccessibilityMCP();
+    const a11yMCP = findAccessibilityMCP(this.mcpClients);
     let automatedResults: any = null;
 
     if (a11yMCP && htmlToTest) {
@@ -130,12 +140,12 @@ Format as a structured audit report.`;
       temperature: 0.2,
     });
 
-    const audit = this.parseAuditReport(llmResponse.content);
+    const audit = parseAuditReport(llmResponse.content);
 
     // Merge with automated results if available
     if (automatedResults) {
       audit.automatedResults = automatedResults;
-      audit.complianceScore = this.calculateComplianceScore(audit, automatedResults);
+      audit.complianceScore = calculateComplianceScore(audit, automatedResults);
     }
 
     return this.createSuccessResult(
@@ -164,7 +174,7 @@ Format as a structured audit report.`;
 
     // Try to read HTML file via MCP if path provided
     if (!htmlToFix && htmlPath) {
-      const fileMCP = this.findFileOperationMCP();
+      const fileMCP = findFileOperationMCP(this.mcpClients);
       if (fileMCP) {
         try {
           const client = this.getMCPClient(fileMCP);
@@ -215,11 +225,11 @@ Provide the improved HTML with all accessibility fixes applied. Include comments
       temperature: 0.3,
     });
 
-    const improvedHTML = this.extractHTML(llmResponse.content);
-    const changes = this.extractChanges(llmResponse.content);
+    const improvedHTML = extractHTML(llmResponse.content);
+    const changes = extractChanges(llmResponse.content);
 
     // Try to write improved HTML back via MCP
-    const fileMCP = this.findFileOperationMCP();
+    const fileMCP = findFileOperationMCP(this.mcpClients);
     if (fileMCP && htmlPath) {
       try {
         const client = this.getMCPClient(fileMCP);
@@ -273,208 +283,5 @@ Provide the improved HTML with all accessibility fixes applied. Include comments
     return testResult;
   }
 
-  private parseAuditReport(content: string): any {
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      logger.warn('Failed to parse audit report as JSON', error);
-    }
-
-    return {
-      violations: this.extractViolations(content),
-      recommendations: this.extractRecommendations(content),
-      contrastIssues: this.extractContrastIssues(content),
-      keyboardIssues: this.extractKeyboardIssues(content),
-      ariaIssues: this.extractARIAIssues(content),
-      complianceScore: this.calculateComplianceScoreFromText(content),
-    };
-  }
-
-  private extractViolations(content: string): Array<{ issue: string; level: string; severity: string }> {
-    const violations: Array<{ issue: string; level: string; severity: string }> = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      const lower = line.toLowerCase();
-      if (lower.includes('violation') || lower.includes('issue') || lower.includes('error')) {
-        const severity = this.detectSeverity(line);
-        const level = lower.includes('aaa') ? 'AAA' : lower.includes('aa') ? 'AA' : 'A';
-        violations.push({
-          issue: line.trim(),
-          level,
-          severity,
-        });
-      }
-    }
-
-    return violations;
-  }
-
-  private extractContrastIssues(content: string): string[] {
-    const issues: string[] = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      if (line.toLowerCase().includes('contrast') || line.toLowerCase().includes('color')) {
-        issues.push(line.trim());
-      }
-    }
-
-    return issues;
-  }
-
-  private extractKeyboardIssues(content: string): string[] {
-    const issues: string[] = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      if (line.toLowerCase().includes('keyboard') || line.toLowerCase().includes('tab') || line.toLowerCase().includes('focus')) {
-        issues.push(line.trim());
-      }
-    }
-
-    return issues;
-  }
-
-  private extractARIAIssues(content: string): string[] {
-    const issues: string[] = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      if (line.toLowerCase().includes('aria') || line.toLowerCase().includes('label')) {
-        issues.push(line.trim());
-      }
-    }
-
-    return issues;
-  }
-
-  private extractRecommendations(content: string): string[] {
-    const recommendations: string[] = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      const lower = line.toLowerCase();
-      if ((lower.includes('recommend') || lower.includes('should') || lower.includes('add')) && line.trim().length > 20) {
-        recommendations.push(line.trim());
-      }
-    }
-
-    return recommendations.slice(0, 15);
-  }
-
-  private extractChanges(content: string): Array<{ type: string; description: string }> {
-    const changes: Array<{ type: string; description: string }> = [];
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      const lower = line.toLowerCase();
-      if (lower.includes('added') || lower.includes('fixed') || lower.includes('improved')) {
-        const type = this.detectChangeType(line);
-        changes.push({
-          type,
-          description: line.trim(),
-        });
-      }
-    }
-
-    return changes;
-  }
-
-  private detectChangeType(line: string): string {
-    const lower = line.toLowerCase();
-    if (lower.includes('aria') || lower.includes('label')) return 'aria';
-    if (lower.includes('alt') || lower.includes('image')) return 'images';
-    if (lower.includes('keyboard') || lower.includes('focus') || lower.includes('tab')) return 'keyboard';
-    if (lower.includes('contrast') || lower.includes('color')) return 'contrast';
-    if (lower.includes('semantic') || lower.includes('heading')) return 'semantic';
-    return 'general';
-  }
-
-  private detectSeverity(line: string): string {
-    const lower = line.toLowerCase();
-    if (lower.includes('critical') || lower.includes('blocking')) return 'critical';
-    if (lower.includes('high') || lower.includes('major')) return 'high';
-    if (lower.includes('medium') || lower.includes('moderate')) return 'medium';
-    if (lower.includes('low') || lower.includes('minor')) return 'low';
-    return 'medium';
-  }
-
-  private calculateComplianceScore(audit: any, automatedResults: any): number {
-    // Calculate compliance score (0-100)
-    if (automatedResults && typeof automatedResults === 'object') {
-      if (automatedResults.score !== undefined) {
-        return automatedResults.score;
-      }
-      if (automatedResults.passed !== undefined && automatedResults.total !== undefined) {
-        return (automatedResults.passed / automatedResults.total) * 100;
-      }
-    }
-
-    const violations = audit.violations || [];
-    const totalChecks = violations.length + 10; // Assume at least 10 checks
-    const passed = totalChecks - violations.length;
-    
-    return Math.max(0, Math.min(100, (passed / totalChecks) * 100));
-  }
-
-  private calculateComplianceScoreFromText(content: string): number {
-    // Heuristic: count violations vs recommendations
-    const violations = (content.match(/violation|error|issue/gi) || []).length;
-    const positive = (content.match(/passed|compliant|meets|satisfies/gi) || []).length;
-    
-    const total = violations + positive || 1;
-    const score = (positive / total) * 100;
-    
-    return Math.max(0, Math.min(100, score));
-  }
-
-  private extractHTML(content: string): string {
-    const htmlBlockRegex = /```html\n([\s\S]*?)```/g;
-    const matches = [...content.matchAll(htmlBlockRegex)];
-    
-    if (matches.length > 0) {
-      return matches.map(m => m[1]).join('\n\n');
-    }
-
-    // Try to extract HTML tags
-    const htmlMatch = content.match(/<html[\s\S]*<\/html>/i) || content.match(/<[\w][\s\S]*>/);
-    if (htmlMatch) {
-      return htmlMatch[0];
-    }
-
-    return content;
-  }
-
-  private findAccessibilityMCP(): string | undefined {
-    for (const [serverId, client] of this.mcpClients.entries()) {
-      const capabilities = client.getCapabilities();
-      if (
-        capabilities.tools?.some(tool =>
-          ['run_accessibility_audit', 'accessibility_test', 'axe', 'wcag'].includes(tool.toLowerCase())
-        )
-      ) {
-        return serverId;
-      }
-    }
-    return undefined;
-  }
-
-  private findFileOperationMCP(): string | undefined {
-    for (const [serverId, client] of this.mcpClients.entries()) {
-      const capabilities = client.getCapabilities();
-      if (
-        capabilities.tools?.some(tool =>
-          ['read_file', 'write_file', 'list_directory'].includes(tool)
-        )
-      ) {
-        return serverId;
-      }
-    }
-    return undefined;
-  }
 }
 

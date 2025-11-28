@@ -5,15 +5,17 @@
 import type { MCPServerMetadata, MCPServerConnectionConfig } from './types.js';
 import { MCPRegistry } from './MCPRegistry.js';
 import { MCPServerClient } from './MCPServerClient.js';
+import { DEFAULT_HEALTH_CHECK_INTERVAL_MS } from './constants.js';
 import logger from '../utils/logger.js';
 
 export class MCPManager {
   private registry: MCPRegistry;
   private healthCheckInterval?: NodeJS.Timeout;
-  private readonly healthCheckIntervalMs = 60000; // 1 minute
+  private readonly healthCheckIntervalMs: number;
 
-  constructor(registry?: MCPRegistry) {
+  constructor(registry?: MCPRegistry, healthCheckIntervalMs?: number) {
     this.registry = registry || new MCPRegistry();
+    this.healthCheckIntervalMs = healthCheckIntervalMs || DEFAULT_HEALTH_CHECK_INTERVAL_MS;
   }
 
   /**

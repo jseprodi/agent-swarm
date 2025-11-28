@@ -5,6 +5,7 @@
 import OpenAI from 'openai';
 import { BaseLLMProvider } from '../BaseLLMProvider.js';
 import type { LLMRequest, LLMResponse, LLMProviderConfig } from '../types.js';
+import { DEFAULT_LLM_TIMEOUT_MS } from '../constants.js';
 import logger from '../../utils/logger.js';
 
 export class OpenAIProvider extends BaseLLMProvider {
@@ -22,7 +23,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         this.client = new OpenAI({
           apiKey: config.apiKey || process.env.OPENAI_API_KEY,
           baseURL: config.baseURL,
-          timeout: config.timeout || 60000,
+          timeout: config.timeout || DEFAULT_LLM_TIMEOUT_MS,
         });
         logger.info('OpenAI provider initialized');
       } catch (error) {

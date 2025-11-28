@@ -257,9 +257,9 @@ export class ServerEvaluator {
     maxCount: number = 5
   ): MCPServerDiscoveryResult[] {
     const selected = evaluations
-      .filter(eval => eval.score >= minScore)
+      .filter(evaluation => evaluation.score >= minScore)
       .slice(0, maxCount)
-      .map(eval => eval.server);
+      .map(evaluation => evaluation.server);
 
     logger.info(`Selected ${selected.length} servers with score >= ${minScore}`);
     return selected;
