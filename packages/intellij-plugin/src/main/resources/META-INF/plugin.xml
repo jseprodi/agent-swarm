@@ -1,0 +1,25 @@
+<idea-plugin>
+    <id>com.agentswarm</id>
+    <name>Agent Swarm</name>
+    <version>0.1.0</version>
+    <vendor email="support@agentswarm.com" url="https://agentswarm.com">Agent Swarm</vendor>
+    
+    <description><![CDATA[
+    Agent Swarm integration for IntelliJ IDEA
+    ]]></description>
+    
+    <depends>com.intellij.modules.platform</depends>
+    
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Agent Swarm" secondary="true" anchor="right" 
+                    factoryClass="com.agentswarm.AgentSwarmToolWindowFactory"/>
+    </extensions>
+    
+    <actions>
+        <action id="AgentSwarm.CreateTask" class="com.agentswarm.CreateTaskAction" 
+                text="Create Task" description="Create a new Agent Swarm task">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
+

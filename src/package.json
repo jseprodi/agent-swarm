@@ -1,0 +1,30 @@
+{
+  "name": "@agent-swarm/core",
+  "version": "0.1.0",
+  "description": "Core Agent Swarm system",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./core/*": "./core/*.ts",
+    "./agents/*": "./agents/*.ts",
+    "./llm/*": "./llm/*.ts",
+    "./mcp/*": "./mcp/*.ts",
+    "./communication/*": "./communication/*.ts",
+    "./utils/*": "./utils/*.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "openai": "^4.28.0",
+    "winston": "^3.11.0",
+    "axios": "^1.6.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.7",
+    "typescript": "^5.3.3"
+  }
+}
+

@@ -1,0 +1,42 @@
+{
+  "name": "agent-swarm-cursor",
+  "displayName": "Agent Swarm",
+  "description": "Agent Swarm integration for Cursor",
+  "version": "0.1.0",
+  "publisher": "agent-swarm",
+  "engines": {
+    "cursor": "^1.85.0"
+  },
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentSwarm.createTask",
+        "title": "Create Task"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "agentSwarmTasks",
+          "name": "Agent Swarm Tasks"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "clean": "rm -rf out || rmdir /s /q out || true"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}
+
