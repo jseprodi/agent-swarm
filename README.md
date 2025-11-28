@@ -12,6 +12,7 @@ The Agent Swarm system consists of:
   - `TestAgent`: Writes unit tests and integration tests
   - `DocumentationAgent`: Generates README files, API docs, and code comments
   - `MCPDiscoveryAgent`: Discovers and connects to publicly registered MCP servers
+- **Dynamic Agent Creation**: Orchestrator can automatically create specialized agents when it identifies a need during task decomposition or when no suitable agent exists
 - **MCP Integration**: Extensive use of MCP servers for capabilities like file operations, git, code analysis, external APIs, etc.
 - **Communication Layer**: Message queue for orchestrator coordination, direct calls for sub-agent execution
 - **Task Management**: Centralized tracking of all tasks and their dependencies
@@ -20,6 +21,7 @@ The Agent Swarm system consists of:
 
 - **Pluggable LLM Integration**: Support for multiple LLM providers (Cursor, OpenAI, Anthropic) with easy customization
 - **LLM-Powered Orchestration**: Intelligent task decomposition and agent selection using configured LLM provider
+- **Dynamic Agent Creation**: Automatically creates specialized agents when needed, with optional persistence for reuse
 - **MCP-First Architecture**: System extensively leverages MCP servers for capabilities; agents prefer MCP servers over direct implementations
 - **Automatic MCP Discovery**: Dedicated agent finds and connects to publicly registered MCP servers based on task requirements
 - **Extensible**: Easy to add new domain-specific agents and LLM providers; MCP servers extend capabilities dynamically
@@ -205,6 +207,52 @@ const result = await swarm.execute(
 );
 ```
 
+### Dynamic Agent Creation
+
+The orchestrator can automatically create specialized agents when it identifies a need. Enable this feature in your configuration:
+
+```typescript
+import { Swarm } from './src/index.js';
+
+const swarm = new Swarm({
+  dynamicAgents: {
+    enabled: true,
+    maxDynamicAgents: 10, // Limit number of agents created
+    agentCreationThreshold: 0.5, // Complexity threshold (0-1)
+    defaultPersistence: {
+      persist: true,
+      persistConfig: true, // Save agent specifications to disk
+      persistCode: false, // Code generation not currently used
+    },
+    persistenceDirectory: 'data/agents/dynamic', // Where to save agents
+  },
+});
+
+// Execute a task - if no suitable agent exists, one will be created automatically
+const result = await swarm.execute(
+  'Create a specialized data visualization component with D3.js'
+);
+```
+
+Dynamic agents are created in two scenarios:
+1. **During task decomposition**: When the orchestrator identifies that a subtask would benefit from a specialized agent
+2. **When no agent is found**: If no existing agent can handle a subtask, a new one is created automatically
+
+You can also control persistence per-task:
+
+```typescript
+const result = await swarm.execute(
+  'Generate a custom API client for a REST service',
+  {
+    agentPersistence: {
+      persist: true,
+      persistConfig: true,
+      persistCode: false,
+    },
+  }
+);
+```
+
 ## Project Structure
 
 ```
@@ -284,6 +332,23 @@ interface SwarmConfig {
   logLevel?: string;                 // Logging level (debug, info, warn, error)
   llmProvider?: 'cursor' | 'openai' | 'anthropic' | ILLMProvider;  // LLM provider to use
   llmConfig?: LLMProviderConfig;     // LLM provider configuration
+  dynamicAgents?: DynamicAgentConfig; // Dynamic agent creation configuration
+}
+```
+
+### Dynamic Agent Configuration
+
+```typescript
+interface DynamicAgentConfig {
+  enabled: boolean;                  // Enable/disable dynamic agent creation
+  maxDynamicAgents?: number;         // Maximum number of dynamic agents to create (default: 10)
+  agentCreationThreshold?: number;   // Complexity threshold 0-1 (default: 0.5)
+  defaultPersistence?: {             // Default persistence options
+    persist: boolean;
+    persistConfig?: boolean;         // Save agent specifications
+    persistCode?: boolean;           // Save generated code (future use)
+  };
+  persistenceDirectory?: string;     // Directory for persisted agents (default: 'data/agents/dynamic')
 }
 ```
 
@@ -306,6 +371,44 @@ You can also set LLM provider API keys via environment variables:
 - `OPENAI_API_KEY` - For OpenAI provider
 - `ANTHROPIC_API_KEY` - For Anthropic provider
 
+## Dynamic Agent Creation
+
+The orchestrator can automatically create specialized agents when it recognizes a need. This feature uses LLM-powered analysis to:
+
+1. **Detect Missing Capabilities**: Analyzes tasks to identify if a specialized agent would be beneficial
+2. **Generate Agent Specifications**: Creates complete agent specifications including:
+   - Name and description
+   - Required capabilities
+   - Execution strategy (LLM direct, workflow, or hybrid)
+   - Prompt templates and workflow steps
+   - Output format preferences
+3. **Create and Register Agents**: Instantiates agents and registers them in the agent registry
+4. **Optional Persistence**: Saves agent specifications to disk for reuse across sessions
+
+### How It Works
+
+When a task is executed:
+1. The orchestrator decomposes the task into subtasks
+2. For each subtask, it checks if a suitable agent exists
+3. If no agent is found and dynamic agents are enabled:
+   - The LLM analyzes whether creating a specialized agent would be beneficial
+   - If yes, it generates a complete agent specification
+   - A `DynamicAgent` is created with the specification
+   - The agent is registered and used for the task
+4. Optionally, the agent specification is saved to disk for future use
+
+### Agent Execution Strategies
+
+Dynamic agents support three execution strategies:
+
+- **llm_direct**: Direct LLM interaction with custom prompts
+- **workflow**: Multi-step workflow with defined steps
+- **hybrid**: Combines LLM analysis with workflow execution
+
+### Persistence
+
+Agent specifications are saved as JSON files in the configured directory. On startup, persisted agents are automatically loaded and registered. This allows agents created in previous sessions to be reused.
+
 ## API Reference
 
 ### Swarm Class
@@ -315,16 +418,19 @@ You can also set LLM provider API keys via environment variables:
 - `getMessageQueue(): MessageQueue` - Get the message queue instance
 - `getAgentRegistry(): AgentRegistry` - Get the agent registry
 - `getMCPManager(): MCPManager` - Get the MCP manager
+- `getOrchestrator(): Orchestrator` - Get the orchestrator instance
 - `cleanup(): Promise<void>` - Cleanup resources
 
 ### Creating Custom Agents
+
+You can create custom agents by extending `BaseAgent`:
 
 ```typescript
 import { BaseAgent } from './src/core/Agent.js';
 import type { Task, TaskResult } from './src/core/types.js';
 
 export class MyCustomAgent extends BaseAgent {
-  constructor(llm?: LLMIntegration) {
+  constructor(llm?: ILLMProvider) {
     super(
       'my-custom-agent',
       'My Custom Agent',
@@ -339,6 +445,38 @@ export class MyCustomAgent extends BaseAgent {
     return this.createSuccessResult(task.id, { /* result data */ });
   }
 }
+```
+
+### Working with Dynamic Agents
+
+You can also work directly with the dynamic agent system:
+
+```typescript
+import { AgentFactory, DynamicAgent } from './src/agents/index.js';
+import type { AgentSpecification } from './src/core/types.js';
+
+// Create an agent factory
+const factory = new AgentFactory(agentRegistry, llm);
+
+// Create a dynamic agent from a specification
+const spec: AgentSpecification = {
+  name: 'Data Processing Agent',
+  description: 'Specialized agent for processing and transforming data',
+  capabilities: ['data_processing', 'data_transformation'],
+  behavior: {
+    executionStrategy: 'workflow',
+    workflowSteps: [
+      { step: 'validate', description: 'Validate input data', action: 'Check data format' },
+      { step: 'transform', description: 'Transform data', action: 'Apply transformations' },
+    ],
+    outputFormat: 'json',
+  },
+};
+
+const agent = await factory.createDynamicAgent(spec, {
+  persist: true,
+  persistConfig: true,
+});
 ```
 
 ## License

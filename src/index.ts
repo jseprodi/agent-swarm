@@ -7,6 +7,7 @@ import { Orchestrator } from './core/Orchestrator.js';
 import { MessageQueue } from './communication/MessageQueue.js';
 import { AgentRegistry } from './communication/AgentRegistry.js';
 import { MCPManager } from './mcp/MCPManager.js';
+import { DEFAULT_HEALTH_CHECK_INTERVAL_MS } from './mcp/constants.js';
 import type { ILLMProvider, LLMProviderConfig } from './llm/types.js';
 import { CursorLLMProvider } from './llm/providers/CursorLLMProvider.js';
 import { OpenAIProvider } from './llm/providers/OpenAIProvider.js';
@@ -18,7 +19,9 @@ import { MCPDiscoveryAgent } from './agents/MCPDiscoveryAgent.js';
 import { StylesheetAgent } from './agents/StylesheetAgent.js';
 import { ErrorDebuggingAgent } from './agents/ErrorDebuggingAgent.js';
 import { AccessibilityAgent } from './agents/AccessibilityAgent.js';
-import type { Task, TaskResult } from './core/types.js';
+import { DatabaseAgent } from './agents/DatabaseAgent.js';
+import { UnitTestAgent } from './agents/UnitTestAgent.js';
+import type { Task, TaskResult, DynamicAgentConfig } from './core/types.js';
 import logger from './utils/logger.js';
 
 export type LLMProviderType = 'cursor' | 'openai' | 'anthropic';
@@ -29,6 +32,7 @@ export interface SwarmConfig {
   logLevel?: string;
   llmProvider?: LLMProviderType | ILLMProvider;
   llmConfig?: LLMProviderConfig;
+  dynamicAgents?: DynamicAgentConfig;
 }
 
 /**
@@ -55,18 +59,23 @@ export class Swarm {
     this.taskManager = new TaskManager();
     this.messageQueue = new MessageQueue();
     this.agentRegistry = new AgentRegistry();
-    this.mcpManager = new MCPManager();
+    this.mcpManager = new MCPManager(
+      undefined,
+      config.healthCheckInterval || DEFAULT_HEALTH_CHECK_INTERVAL_MS
+    );
     
     // Initialize LLM provider
     this.llm = this.initializeLLMProvider(config);
 
-    // Create orchestrator
+    // Create orchestrator with dynamic agent config
     this.orchestrator = new Orchestrator(
       this.taskManager,
       this.messageQueue,
       this.agentRegistry,
       this.mcpManager,
-      this.llm
+      this.llm,
+      undefined, // maxConcurrentTasks
+      config.dynamicAgents
     );
 
     // Register orchestrator
@@ -74,6 +83,13 @@ export class Swarm {
 
     // Register domain agents
     this.registerDefaultAgents();
+
+    // Load persisted dynamic agents if enabled (async, but don't block constructor)
+    if (config.dynamicAgents?.enabled) {
+      this.loadPersistedAgents().catch(error => {
+        logger.warn('Failed to load persisted agents during initialization:', error);
+      });
+    }
 
     // Start health checks if enabled
     if (config.enableHealthChecks) {
@@ -120,6 +136,23 @@ export class Swarm {
   }
 
   /**
+   * Load persisted dynamic agents
+   */
+  private async loadPersistedAgents(): Promise<void> {
+    try {
+      const orchestrator = this.orchestrator;
+      const agentFactory = orchestrator.getAgentFactory();
+      
+      if (agentFactory) {
+        const loadedAgents = await agentFactory.loadPersistedAgents();
+        logger.info(`Loaded ${loadedAgents.length} persisted dynamic agents`);
+      }
+    } catch (error) {
+      logger.warn('Failed to load persisted agents:', error);
+    }
+  }
+
+  /**
    * Register default domain agents
    */
   private registerDefaultAgents(): void {
@@ -130,6 +163,8 @@ export class Swarm {
     const stylesheetAgent = new StylesheetAgent(this.llm);
     const errorDebuggingAgent = new ErrorDebuggingAgent(this.llm);
     const accessibilityAgent = new AccessibilityAgent(this.llm);
+    const databaseAgent = new DatabaseAgent(this.llm);
+    const unitTestAgent = new UnitTestAgent(this.llm);
 
     this.agentRegistry.register(codeAgent);
     this.agentRegistry.register(testAgent);
@@ -138,8 +173,10 @@ export class Swarm {
     this.agentRegistry.register(stylesheetAgent);
     this.agentRegistry.register(errorDebuggingAgent);
     this.agentRegistry.register(accessibilityAgent);
+    this.agentRegistry.register(databaseAgent);
+    this.agentRegistry.register(unitTestAgent);
 
-    logger.info('Registered default agents: CodeAgent, TestAgent, DocumentationAgent, MCPDiscoveryAgent, StylesheetAgent, ErrorDebuggingAgent, AccessibilityAgent');
+    logger.info('Registered default agents: CodeAgent, TestAgent, DocumentationAgent, MCPDiscoveryAgent, StylesheetAgent, ErrorDebuggingAgent, AccessibilityAgent, DatabaseAgent, UnitTestAgent');
   }
 
   /**
@@ -204,10 +241,18 @@ export class Swarm {
    */
   async cleanup(): Promise<void> {
     logger.info('Cleaning up Agent Swarm...');
-    await this.mcpManager.cleanup();
-    this.taskManager.clear();
-    this.agentRegistry.clear();
-    this.messageQueue.clearHistory();
+    try {
+      await this.mcpManager.cleanup();
+    } catch (error) {
+      logger.warn('Error during MCP manager cleanup:', error);
+    }
+    try {
+      this.taskManager.clear();
+      this.agentRegistry.clear();
+      this.messageQueue.clearHistory();
+    } catch (error) {
+      logger.warn('Error during component cleanup:', error);
+    }
     logger.info('Agent Swarm cleanup completed');
   }
 }

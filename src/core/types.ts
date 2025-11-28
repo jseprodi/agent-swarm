@@ -78,3 +78,53 @@ export interface TaskDecomposition {
   estimatedExecutionOrder: string[]; // Task IDs in execution order
 }
 
+/**
+ * Agent behavior specification for dynamic agents
+ */
+export interface AgentBehaviorSpec {
+  executionStrategy: 'llm_direct' | 'workflow' | 'hybrid';
+  promptTemplate?: string;
+  workflowSteps?: Array<{
+    step: string;
+    description: string;
+    action: string;
+  }>;
+  outputFormat?: 'json' | 'text' | 'code' | 'mixed';
+  temperature?: number;
+  maxTokens?: number;
+}
+
+/**
+ * Specification for a dynamically created agent
+ */
+export interface AgentSpecification {
+  name: string;
+  description: string;
+  capabilities: AgentCapability[];
+  behavior: AgentBehaviorSpec;
+  requiredMCPServers?: string[];
+  metadata?: Record<string, unknown>;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+/**
+ * Options for persisting dynamically created agents
+ */
+export interface AgentPersistenceOptions {
+  persist: boolean;
+  persistConfig?: boolean; // Save specification JSON
+  persistCode?: boolean; // Save generated code if applicable
+}
+
+/**
+ * Configuration for dynamic agent creation
+ */
+export interface DynamicAgentConfig {
+  enabled: boolean; // Enable/disable feature
+  maxDynamicAgents?: number; // Limit number created
+  defaultPersistence?: AgentPersistenceOptions;
+  agentCreationThreshold?: number; // Complexity score threshold (0-1)
+  persistenceDirectory?: string; // Directory for persisted agents
+}
+
