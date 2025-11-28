@@ -31,13 +31,11 @@ describe('UnitTestAgent', () => {
     it('should execute unit test generation task', async () => {
       const task = createTestTask('Generate unit tests for a factorial function');
       
-      mockLLM.setResponse(
-        'Generate unit tests for a factorial function',
-        {
-          content: '```javascript\ndescribe("factorial", () => {\n  it("should return 1 for 0", () => {\n    expect(factorial(0)).toBe(1);\n  });\n  it("should return 1 for 1", () => {\n    expect(factorial(1)).toBe(1);\n  });\n});\n```\n\nThese unit tests verify the factorial function works correctly for edge cases.',
-          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
-        }
-      );
+      // Set default response with test code
+      mockLLM.setDefaultResponse({
+        content: '```javascript\ndescribe("factorial", () => {\n  it("should return 1 for 0", () => {\n    expect(factorial(0)).toBe(1);\n  });\n  it("should return 1 for 1", () => {\n    expect(factorial(1)).toBe(1);\n  });\n});\n```\n\nThese unit tests verify the factorial function works correctly for edge cases.',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       
@@ -58,13 +56,11 @@ describe('UnitTestAgent', () => {
         testFramework: 'jest',
       });
       
-      mockLLM.setResponse(
-        'Generate unit tests',
-        {
-          content: '```javascript\ntest("add function", () => {\n  expect(add(1, 2)).toBe(3);\n});\n```',
-          usage: { promptTokens: 8, completionTokens: 15, totalTokens: 23 },
-        }
-      );
+      // Set default response with test code
+      mockLLM.setDefaultResponse({
+        content: '```javascript\ndescribe("math", () => {\n  it("test 1", () => { expect(add(1, 2)).toBe(3); });\n  it("test 2", () => { expect(add(0, 0)).toBe(0); });\n});\n```',
+        usage: { promptTokens: 8, completionTokens: 15, totalTokens: 23 },
+      });
       
       const result = await agent.execute(task);
       
@@ -80,13 +76,11 @@ describe('UnitTestAgent', () => {
     it('should detect test framework from generated code', async () => {
       const task = createTestTask('Generate unit tests for a function');
       
-      mockLLM.setResponse(
-        'Generate unit tests for a function',
-        {
-          content: '```python\ndef test_factorial():\n    assert factorial(5) == 120\n```',
-          usage: { promptTokens: 10, completionTokens: 15, totalTokens: 25 },
-        }
-      );
+      // Set default response with pytest test
+      mockLLM.setDefaultResponse({
+        content: '```python\ndef test_factorial():\n    assert factorial(5) == 120\n```',
+        usage: { promptTokens: 10, completionTokens: 15, totalTokens: 25 },
+      });
       
       const result = await agent.execute(task);
       
@@ -101,13 +95,11 @@ describe('UnitTestAgent', () => {
     it('should count unit tests correctly', async () => {
       const task = createTestTask('Generate multiple unit tests');
       
-      mockLLM.setResponse(
-        'Generate multiple unit tests',
-        {
-          content: '```javascript\ndescribe("math", () => {\n  it("test 1", () => {});\n  it("test 2", () => {});\n  it("test 3", () => {});\n});\n```',
-          usage: { promptTokens: 10, completionTokens: 25, totalTokens: 35 },
-        }
-      );
+      // Set default response with multiple tests
+      mockLLM.setDefaultResponse({
+        content: '```javascript\ndescribe("math", () => {\n  it("test 1", () => {});\n  it("test 2", () => {});\n  it("test 3", () => {});\n});\n```',
+        usage: { promptTokens: 10, completionTokens: 25, totalTokens: 35 },
+      });
       
       const result = await agent.execute(task);
       
@@ -145,14 +137,22 @@ describe('UnitTestAgent', () => {
     });
 
     it('should handle errors gracefully', async () => {
+      // Create a new mock LLM that's unavailable
+      const unavailableLLM = new MockLLMProvider(false);
+      // Ensure no default response can mask the error
+      unavailableLLM.setDefaultResponse({
+        content: '',
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      const errorAgent = new UnitTestAgent(unavailableLLM);
       const task = createTestTask('Generate unit tests');
-      mockLLM.setAvailable(false);
       
-      const result = await agent.execute(task);
+      const result = await errorAgent.execute(task);
       
       expect(result).toBeDefined();
-      // The agent should handle the error and return a failure result
+      // The agent should handle the error and return a failure result 
       expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 

@@ -9,16 +9,18 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 // Mock fs module
-vi.mock('fs/promises', () => ({
-  default: {
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
     writeFile: vi.fn(),
     readFile: vi.fn(),
     readdir: vi.fn(),
     access: vi.fn(),
     unlink: vi.fn(),
     mkdir: vi.fn(),
-  },
-}));
+  };
+});
 
 describe('AgentPersistenceManager', () => {
   let manager: AgentPersistenceManager;
@@ -140,20 +142,24 @@ describe('AgentPersistenceManager', () => {
     });
   });
 
-  describe('deleteSpecification', () => {
+  describe('deletePersistedAgent', () => {
     it('should delete specification file', async () => {
       vi.mocked(fs.access).mockResolvedValue(undefined);
       vi.mocked(fs.unlink).mockResolvedValue(undefined);
 
-      await manager.deleteSpecification('test-agent');
+      const result = await manager.deletePersistedAgent('test-agent');
 
       expect(fs.unlink).toHaveBeenCalled();
+      expect(result).toBe(true);
     });
 
     it('should handle file not found gracefully', async () => {
       vi.mocked(fs.access).mockRejectedValue(new Error('File not found'));
 
-      await expect(manager.deleteSpecification('non-existent')).resolves.not.toThrow();
+      const result = await manager.deletePersistedAgent('non-existent');
+      
+      expect(result).toBe(false);
+      expect(fs.unlink).not.toHaveBeenCalled();
     });
   });
 });

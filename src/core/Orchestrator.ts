@@ -14,6 +14,7 @@ import { MCPDiscoveryAgent } from '../agents/MCPDiscoveryAgent.js';
 import { AgentFactory } from '../agents/AgentFactory.js';
 import { TASK_DEPENDENCY_POLL_INTERVAL_MS } from './constants.js';
 import type { DynamicAgentConfig, AgentPersistenceOptions, Agent } from './types.js';
+import type { MetricsCollector } from '../metrics/MetricsCollector.js';
 import logger from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -36,14 +37,16 @@ export class Orchestrator extends BaseAgent {
     mcpManager: MCPManager,
     llm?: ILLMProvider,
     maxConcurrentTasks?: number,
-    dynamicAgentConfig?: DynamicAgentConfig
+    dynamicAgentConfig?: DynamicAgentConfig,
+    metricsCollector?: MetricsCollector
   ) {
     super(
       'orchestrator',
       'Orchestrator Agent',
       'Coordinates tasks, decomposes them, and delegates to appropriate sub-agents',
       ['orchestration', 'task_decomposition', 'agent_selection'],
-      llm
+      llm,
+      metricsCollector
     );
 
     this.taskManager = taskManager;
@@ -89,33 +92,50 @@ export class Orchestrator extends BaseAgent {
     }
 
     this.isProcessing = true;
+    const overallTimer = this.metricsCollector?.timer('orchestrator_task_execution_time');
 
     // Add overall timeout to prevent hanging (15 seconds max - must be less than test timeout)
     const MAX_EXECUTION_TIME_MS = 15000;
     const executionPromise = (async () => {
       try {
         // Step 1: Ensure MCP servers are available
+        const mcpTimer = this.metricsCollector?.timer('orchestrator_mcp_setup_time');
         await this.ensureMCPServers(task);
+        mcpTimer?.record(Date.now() - (mcpTimer as any).startTime || 0);
 
         // Step 2: Decompose the task
-        const decomposition = await this.decomposeTask(task);
+        const decompositionTimer = this.metricsCollector?.timer('orchestrator_task_decomposition_time');
+        const decomposition = await decompositionTimer?.time(() => this.decomposeTask(task)) || await this.decomposeTask(task);
 
         // Step 3: Create subtasks
         const subtasks = this.createSubtasks(task, decomposition);
+        if (this.metricsCollector) {
+          this.metricsCollector.gauge('orchestrator_subtasks_count').set(subtasks.length);
+        }
 
         // Step 4: Execute subtasks in order
-        const results = await this.executeSubtasks(subtasks);
+        const executionTimer = this.metricsCollector?.timer('orchestrator_subtask_execution_time');
+        const results = await executionTimer?.time(() => this.executeSubtasks(subtasks)) || await this.executeSubtasks(subtasks);
 
         // Step 5: Synthesize results
-        const synthesizedResult = await this.synthesizeResults(task, results);
+        const synthesisTimer = this.metricsCollector?.timer('orchestrator_result_synthesis_time');
+        const synthesizedResult = await synthesisTimer?.time(() => this.synthesizeResults(task, results)) || await this.synthesizeResults(task, results);
+
+        if (this.metricsCollector) {
+          this.metricsCollector.counter('orchestrator_tasks_completed').inc();
+        }
 
         return synthesizedResult;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`Orchestrator error:`, error);
+        if (this.metricsCollector) {
+          this.metricsCollector.counter('orchestrator_tasks_failed').inc();
+        }
         return this.createFailureResult(task.id, errorMessage);
       } finally {
         this.isProcessing = false;
+        overallTimer?.record(Date.now() - (overallTimer as any).startTime || 0);
       }
     })();
 
@@ -251,14 +271,49 @@ export class Orchestrator extends BaseAgent {
         const dependencies = new Map<string, string[]>();
         const subtaskDescriptions = new Map<string, string>();
 
+        // Create a map of agent ID to capabilities for quick lookup
+        // Use getAllAgents() to ensure we include all agents, not just available ones
+        const allAgents = this.agentRegistry.getAllAgents();
+        const agentCapabilitiesMap = new Map<string, string[]>();
+        for (const agent of allAgents) {
+          agentCapabilitiesMap.set(agent.id, agent.capabilities);
+        }
+
         // Create subtasks
         for (const subtask of decomposition.subtasks) {
+          // Map agent name to capabilities if provided
+          let requiredCapabilities: string[] | undefined;
+          if (subtask.agent) {
+            // First, try to get capabilities from the agent directly
+            const agent = this.agentRegistry.getAgent(subtask.agent);
+            if (agent) {
+              requiredCapabilities = agent.capabilities;
+            } else {
+              // Fallback to map lookup
+              requiredCapabilities = agentCapabilitiesMap.get(subtask.agent);
+              if (!requiredCapabilities) {
+                logger.warn(`Agent ${subtask.agent} not found in registry for subtask: ${subtask.description}. Available agents: ${allAgents.map(a => a.id).join(', ')}`);
+              }
+            }
+          }
+
+          // Create subtask without adding parent to dependencies to avoid circular dependency
+          // (parent waits for subtasks, not vice versa)
           const subtaskTask = this.taskManager.createTask(
             subtask.description,
             task.id,
-            undefined, // Capabilities will be determined by agent
-            undefined
+            requiredCapabilities,
+            undefined,
+            undefined,
+            false // Don't add parent to dependencies for Orchestrator subtasks
           );
+          // Store the preferred agent ID in metadata for direct selection
+          if (subtask.agent) {
+            subtaskTask.metadata = {
+              ...subtaskTask.metadata,
+              preferredAgentId: subtask.agent,
+            };
+          }
           subtasks.push(subtaskTask);
           subtaskDescriptions.set(subtaskTask.id, subtask.description);
 
@@ -297,12 +352,14 @@ export class Orchestrator extends BaseAgent {
       }
     }
 
-    // Fallback: create a single subtask
+    // Fallback: create a single subtask without adding parent to dependencies
     const subtask = this.taskManager.createTask(
       task.description,
       task.id,
       task.requiredCapabilities,
-      task.requiredMCPServers
+      task.requiredMCPServers,
+      undefined,
+      false // Don't add parent to dependencies for Orchestrator subtasks
     );
 
     return {
@@ -492,18 +549,44 @@ export class Orchestrator extends BaseAgent {
    * Select appropriate agent for a task
    */
   private async selectAgent(task: Task): Promise<Agent | undefined> {
+    // Check if task has a preferred agent ID in metadata (from decomposition)
+    if (task.metadata?.preferredAgentId) {
+      const preferredAgentId = task.metadata.preferredAgentId as string;
+      const preferredAgent = this.agentRegistry.getAgent(preferredAgentId);
+      if (preferredAgent) {
+        // Check if agent is available using the registry's method
+        const availableAgents = this.agentRegistry.getAvailableAgents();
+        if (availableAgents.some(a => a.id === preferredAgentId)) {
+          return preferredAgent;
+        } else {
+          logger.debug(`Preferred agent ${preferredAgentId} exists but is not available`);
+        }
+      } else {
+        logger.debug(`Preferred agent ${preferredAgentId} not found in registry`);
+      }
+    }
+
     // First, try to find agents with all required capabilities
     if (task.requiredCapabilities && task.requiredCapabilities.length > 0) {
-      const candidates = this.agentRegistry.findAgentsByCapability(task.requiredCapabilities);
-      if (candidates.length > 0) {
+      logger.debug(`Selecting agent for task ${task.id} with required capabilities: ${task.requiredCapabilities.join(', ')}`);
+      // Find all agents with matching capabilities, then filter to available ones
+      const allCandidates = this.agentRegistry.findAgentsByCapability(task.requiredCapabilities);
+      logger.debug(`Found ${allCandidates.length} agents with matching capabilities: ${allCandidates.map(a => a.id).join(', ')}`);
+      const availableCandidates = allCandidates.filter(agent => {
+        const registration = (this.agentRegistry as any).registrations?.get(agent.id);
+        return registration?.isAvailable !== false;
+      });
+      logger.debug(`Found ${availableCandidates.length} available agents: ${availableCandidates.map(a => a.id).join(', ')}`);
+      
+      if (availableCandidates.length > 0) {
         // Use LLM to select best agent if available
         const llmHelpers = this.getLLMHelpers();
-        if (this.llm.isAvailable() && llmHelpers && candidates.length > 1) {
+        if (this.llm.isAvailable() && llmHelpers && availableCandidates.length > 1) {
           try {
             // Add timeout to prevent hanging
             const selectPromise = llmHelpers.selectAgents(
               task.description,
-              candidates.map(a => {
+              availableCandidates.map(a => {
                 // BaseAgent has getMetadata, but Agent interface doesn't require it
                 if ('getMetadata' in a && typeof a.getMetadata === 'function') {
                   return a.getMetadata();
@@ -518,31 +601,39 @@ export class Orchestrator extends BaseAgent {
               })
             );
             const timeoutPromise = new Promise<string[]>((resolve) => 
-              setTimeout(() => resolve([candidates[0].id]), 5000)
+              setTimeout(() => resolve([availableCandidates[0].id]), 5000)
             );
             const selected = await Promise.race([selectPromise, timeoutPromise]);
             if (selected.length > 0) {
-              return candidates.find(a => a.id === selected[0]);
+              return availableCandidates.find(a => a.id === selected[0]);
             }
           } catch (error) {
             logger.warn('Agent selection failed, using first candidate', error);
           }
         }
-        return candidates[0]; // Return first candidate
+        return availableCandidates[0]; // Return first available candidate
+      } else if (allCandidates.length > 0) {
+        // Log why agents aren't available
+        logger.warn(`Found ${allCandidates.length} agents with matching capabilities but none are available`);
       }
     }
 
     // Fallback: find agents with any matching capability
     if (task.requiredCapabilities && task.requiredCapabilities.length > 0) {
-      const candidates = this.agentRegistry.findAgentsWithAnyCapability(task.requiredCapabilities);
-      if (candidates.length > 0) {
-        return candidates[0];
+      const allCandidates = this.agentRegistry.findAgentsWithAnyCapability(task.requiredCapabilities);
+      const availableCandidates = allCandidates.filter(agent => {
+        const registration = (this.agentRegistry as any).registrations?.get(agent.id);
+        return registration?.isAvailable !== false;
+      });
+      if (availableCandidates.length > 0) {
+        return availableCandidates[0];
       }
     }
 
-    // Last resort: return first available agent
+    // Last resort: return first available agent (but not the orchestrator itself)
     const available = this.agentRegistry.getAvailableAgents();
-    return available.length > 0 ? available[0] : undefined;
+    const nonOrchestrator = available.filter(a => a.id !== 'orchestrator');
+    return nonOrchestrator.length > 0 ? nonOrchestrator[0] : (available.length > 0 ? available[0] : undefined);
   }
 
   /**

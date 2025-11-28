@@ -10,16 +10,18 @@ import type { AgentSpecification, AgentPersistenceOptions } from '../core/types.
 import * as fs from 'fs/promises';
 
 // Mock fs module
-vi.mock('fs/promises', () => ({
-  default: {
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
     writeFile: vi.fn(),
     readFile: vi.fn(),
     readdir: vi.fn(),
     access: vi.fn(),
     unlink: vi.fn(),
     mkdir: vi.fn(),
-  },
-}));
+  };
+});
 
 describe('AgentFactory', () => {
   let factory: AgentFactory;

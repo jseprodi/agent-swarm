@@ -243,5 +243,278 @@ describe('MessageQueue', () => {
       expect((message?.payload as any).taskId).toBe('target');
     });
   });
+
+  describe('sendDirectMessage', () => {
+    it('should send to specific agent', () => {
+      const message = createTestMessage('agent_message', { data: 'test' });
+      const handler = vi.fn();
+      
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).toHaveBeenCalledWith(message);
+      expect(message.targetAgentId).toBe('agent-1');
+    });
+
+    it('should trigger agent handler', () => {
+      const handler = vi.fn();
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      
+      const message = createTestMessage('agent_message', { data: 'test' });
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should handle handler errors gracefully', () => {
+      const handler = vi.fn(() => {
+        throw new Error('Handler error');
+      });
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      
+      const message = createTestMessage('agent_message', { data: 'test' });
+      
+      expect(() => messageQueue.sendDirectMessage('agent-1', message)).not.toThrow();
+    });
+  });
+
+  describe('registerAgentHandler', () => {
+    it('should register handler', () => {
+      const handler = vi.fn();
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      
+      const message = createTestMessage('agent_message', {});
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should support multiple handlers for same agent', () => {
+      const handler1 = vi.fn();
+      const handler2 = vi.fn();
+      
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler1);
+      messageQueue.registerAgentHandler('agent-1', 'task_completed', handler2);
+      
+      const message1 = createTestMessage('agent_message', {});
+      const message2 = createTestMessage('task_completed', {});
+      
+      messageQueue.sendDirectMessage('agent-1', message1);
+      messageQueue.sendDirectMessage('agent-1', message2);
+      
+      expect(handler1).toHaveBeenCalledTimes(1);
+      expect(handler2).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('unregisterAgentHandler', () => {
+    it('should unregister handler', () => {
+      const handler = vi.fn();
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      messageQueue.unregisterAgentHandler('agent-1', 'agent_message');
+      
+      const message = createTestMessage('agent_message', {});
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('requestResponse', () => {
+    it('should send request and wait for response', async () => {
+      const request = createTestMessage('agent_request', { requestId: '123' });
+      
+      // Set up response handler
+      setTimeout(() => {
+        const response = createTestMessage('agent_response', { requestId: '123' }, {
+          sourceAgentId: 'agent-1',
+          correlationId: request.correlationId,
+        });
+        messageQueue.publish(response);
+      }, 10);
+      
+      const response = await messageQueue.requestResponse('agent-1', request, 1000);
+      
+      expect(response).toBeDefined();
+      expect(response.type).toBe('agent_response');
+    });
+
+    it('should timeout when no response', async () => {
+      const request = createTestMessage('agent_request', {});
+      
+      await expect(
+        messageQueue.requestResponse('agent-1', request, 50)
+      ).rejects.toThrow('timeout');
+    });
+
+    it('should match correlation ID', async () => {
+      const request = createTestMessage('agent_request', {}, { correlationId: 'corr-123' });
+      
+      setTimeout(() => {
+        const response = createTestMessage('agent_response', {}, {
+          sourceAgentId: 'agent-1',
+          correlationId: 'corr-123',
+        });
+        messageQueue.publish(response);
+      }, 10);
+      
+      const response = await messageQueue.requestResponse('agent-1', request, 1000);
+      expect(response.correlationId).toBe('corr-123');
+    });
+  });
+
+  describe('broadcast', () => {
+    it('should send to all agents', () => {
+      const handler1 = vi.fn();
+      const handler2 = vi.fn();
+      
+      messageQueue.subscribe('broadcast_message', handler1);
+      messageQueue.subscribe('broadcast_message', handler2);
+      
+      const message = createTestMessage('broadcast_message', { data: 'test' });
+      messageQueue.broadcast(message);
+      
+      expect(handler1).toHaveBeenCalled();
+      expect(handler2).toHaveBeenCalled();
+      expect(message.targetAgentId).toBeUndefined();
+    });
+  });
+
+  describe('sendMessageToAgent', () => {
+    it('should send to specific agent', () => {
+      const message = createTestMessage('agent_message', { data: 'test' });
+      const handler = vi.fn();
+      
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).toHaveBeenCalledWith(message);
+      expect(message.targetAgentId).toBe('agent-1');
+    });
+
+    it('should trigger agent handler', () => {
+      const handler = vi.fn();
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      
+      const message = createTestMessage('agent_message', { data: 'test' });
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should handle handler errors gracefully', () => {
+      const handler = vi.fn(() => {
+        throw new Error('Handler error');
+      });
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      
+      const message = createTestMessage('agent_message', { data: 'test' });
+      
+      expect(() => messageQueue.sendDirectMessage('agent-1', message)).not.toThrow();
+    });
+  });
+
+  describe('registerAgentHandler', () => {
+    it('should register handler', () => {
+      const handler = vi.fn();
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      
+      const message = createTestMessage('agent_message', {});
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should support multiple handlers for same agent', () => {
+      const handler1 = vi.fn();
+      const handler2 = vi.fn();
+      
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler1);
+      messageQueue.registerAgentHandler('agent-1', 'task_completed', handler2);
+      
+      const message1 = createTestMessage('agent_message', {});
+      const message2 = createTestMessage('task_completed', {});
+      
+      messageQueue.sendDirectMessage('agent-1', message1);
+      messageQueue.sendDirectMessage('agent-1', message2);
+      
+      expect(handler1).toHaveBeenCalledTimes(1);
+      expect(handler2).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('unregisterAgentHandler', () => {
+    it('should unregister handler', () => {
+      const handler = vi.fn();
+      messageQueue.registerAgentHandler('agent-1', 'agent_message', handler);
+      messageQueue.unregisterAgentHandler('agent-1', 'agent_message');
+      
+      const message = createTestMessage('agent_message', {});
+      messageQueue.sendDirectMessage('agent-1', message);
+      
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('requestResponse', () => {
+    it('should send request and wait for response', async () => {
+      const request = createTestMessage('agent_request', { requestId: '123' });
+      
+      // Set up response handler - need to publish with correct type
+      setTimeout(() => {
+        const response = createTestMessage('agent_response', { requestId: '123' }, {
+          sourceAgentId: 'agent-1',
+          correlationId: request.correlationId || request.id,
+        });
+        // Publish as agent_response type
+        messageQueue.publish(response);
+      }, 10);
+      
+      const response = await messageQueue.requestResponse('agent-1', request, 1000);
+      
+      expect(response).toBeDefined();
+      expect(response.type).toBe('agent_response');
+    }, 2000);
+
+    it('should timeout when no response', async () => {
+      const request = createTestMessage('agent_request', {});
+      
+      await expect(
+        messageQueue.requestResponse('agent-1', request, 50)
+      ).rejects.toThrow('timeout');
+    }, 2000);
+
+    it('should match correlation ID', async () => {
+      const request = createTestMessage('agent_request', {}, { correlationId: 'corr-123' });
+      
+      setTimeout(() => {
+        const response = createTestMessage('agent_response', {}, {
+          sourceAgentId: 'agent-1',
+          correlationId: 'corr-123',
+        });
+        messageQueue.publish(response);
+      }, 10);
+      
+      const response = await messageQueue.requestResponse('agent-1', request, 1000);
+      expect(response.correlationId).toBe('corr-123');
+    }, 2000);
+  });
+
+  describe('broadcast', () => {
+    it('should send to all agents', () => {
+      const handler1 = vi.fn();
+      const handler2 = vi.fn();
+      
+      messageQueue.subscribe('broadcast_message', handler1);
+      messageQueue.subscribe('broadcast_message', handler2);
+      
+      const message = createTestMessage('broadcast_message', { data: 'test' });
+      messageQueue.broadcast(message);
+      
+      expect(handler1).toHaveBeenCalled();
+      expect(handler2).toHaveBeenCalled();
+      expect(message.targetAgentId).toBeUndefined();
+    });
+  });
 });
 

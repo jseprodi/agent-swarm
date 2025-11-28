@@ -85,10 +85,12 @@ describe('DynamicAgent', () => {
     });
 
     it('should handle errors gracefully', async () => {
-      mockLLM.setAvailable(false);
+      // Create a new mock LLM that's unavailable
+      const unavailableLLM = new MockLLMProvider(false);
+      const errorAgent = new DynamicAgent(specification, unavailableLLM);
       const task = createTestTask('Test task');
       
-      const result = await agent.execute(task);
+      const result = await errorAgent.execute(task);
       
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();

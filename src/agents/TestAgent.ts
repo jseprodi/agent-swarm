@@ -22,6 +22,11 @@ export class TestAgent extends BaseAgent {
     logger.info(`TestAgent executing task: ${task.id} - ${task.description}`);
 
     try {
+      // Check if LLM is available
+      if (!this.llm.isAvailable()) {
+        return this.createFailureResult(task.id, 'LLM provider is not available');
+      }
+
       // Build test generation prompt
       const testPrompt = this.buildTestGenerationPrompt(task);
       

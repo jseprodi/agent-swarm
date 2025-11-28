@@ -22,6 +22,11 @@ export class DocumentationAgent extends BaseAgent {
     logger.info(`DocumentationAgent executing task: ${task.id} - ${task.description}`);
 
     try {
+      // Check if LLM is available
+      if (!this.llm.isAvailable()) {
+        return this.createFailureResult(task.id, 'LLM provider is not available');
+      }
+
       // Determine documentation type from task
       const docType = this.determineDocumentationType(task);
 

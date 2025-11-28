@@ -32,13 +32,11 @@ describe('DatabaseAgent', () => {
     it('should execute SQL query generation task', async () => {
       const task = createTestTask('Generate a SQL query to select all users');
       
-      mockLLM.setResponse(
-        'Generate a SQL query to select all users',
-        {
-          content: '```sql\nSELECT * FROM users;\n```\n\nThis query retrieves all records from the users table.',
-          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
-        }
-      );
+      // Set default response that will match the agent's prompt
+      mockLLM.setDefaultResponse({
+        content: '```sql\nSELECT * FROM users WHERE id = 1;\n```\n\nThis query retrieves a user by ID.',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       
@@ -56,13 +54,11 @@ describe('DatabaseAgent', () => {
     it('should execute schema design task', async () => {
       const task = createTestTask('Create a database schema for a blog system');
       
-      mockLLM.setResponse(
-        'Create a database schema for a blog system',
-        {
-          content: '```sql\nCREATE TABLE posts (\n  id SERIAL PRIMARY KEY,\n  title VARCHAR(255),\n  content TEXT\n);\n```',
-          usage: { promptTokens: 15, completionTokens: 25, totalTokens: 40 },
-        }
-      );
+      // Set default response that will match the agent's prompt
+      mockLLM.setDefaultResponse({
+        content: '```sql\nCREATE TABLE posts (\n  id SERIAL PRIMARY KEY,\n  title VARCHAR(255),\n  content TEXT\n);\n```\n\nSchema for blog system.',
+        usage: { promptTokens: 15, completionTokens: 25, totalTokens: 40 },
+      });
       
       const result = await agent.execute(task);
       
@@ -78,13 +74,11 @@ describe('DatabaseAgent', () => {
     it('should execute migration script task', async () => {
       const task = createTestTask('Create a migration to add a new column to the users table');
       
-      mockLLM.setResponse(
-        'Create a migration to add a new column to the users table',
-        {
-          content: '```sql\nALTER TABLE users ADD COLUMN email VARCHAR(255);\n```',
-          usage: { promptTokens: 12, completionTokens: 18, totalTokens: 30 },
-        }
-      );
+      // Set default response that will match the agent's prompt
+      mockLLM.setDefaultResponse({
+        content: '```sql\nALTER TABLE users ADD COLUMN email VARCHAR(255);\n```\n\nMigration to add email column.',
+        usage: { promptTokens: 12, completionTokens: 18, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       
@@ -110,14 +104,17 @@ describe('DatabaseAgent', () => {
     });
 
     it('should handle errors gracefully', async () => {
+      // Create a new mock LLM that's unavailable
+      const unavailableLLM = new MockLLMProvider(false);
+      const errorAgent = new DatabaseAgent(unavailableLLM);
       const task = createTestTask('Generate a query');
-      mockLLM.setAvailable(false);
       
-      const result = await agent.execute(task);
+      const result = await errorAgent.execute(task);
       
       expect(result).toBeDefined();
       // The agent should handle the error and return a failure result
       expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 

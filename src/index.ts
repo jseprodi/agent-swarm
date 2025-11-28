@@ -26,6 +26,41 @@ import logger from './utils/logger.js';
 
 export type LLMProviderType = 'cursor' | 'openai' | 'anthropic';
 
+export interface CachingConfig {
+  enabled: boolean;
+  llmCache?: {
+    enabled: boolean;
+    ttl?: number; // Time to live in milliseconds
+    maxSize?: number;
+  };
+  taskCache?: {
+    enabled: boolean;
+    ttl?: number;
+  };
+  storage?: 'memory' | 'file' | 'hybrid';
+  cacheDirectory?: string;
+}
+
+export interface DistributedExecutionConfig {
+  enabled: boolean;
+  nodeId?: string;
+  discoveryMethod?: 'static' | 'dynamic';
+  nodes?: Array<{ id: string; url: string }>;
+  transport?: 'http' | 'websocket';
+}
+
+export interface ErrorRecoveryConfig {
+  enabled: boolean;
+  maxRetries?: number;
+  retryStrategy?: 'exponential' | 'fixed' | 'adaptive';
+  circuitBreaker?: {
+    enabled: boolean;
+    failureThreshold?: number;
+    recoveryTimeout?: number;
+  };
+  fallbackAgents?: boolean;
+}
+
 export interface SwarmConfig {
   enableHealthChecks?: boolean;
   healthCheckInterval?: number;
@@ -33,6 +68,9 @@ export interface SwarmConfig {
   llmProvider?: LLMProviderType | ILLMProvider;
   llmConfig?: LLMProviderConfig;
   dynamicAgents?: DynamicAgentConfig;
+  caching?: CachingConfig;
+  distributedExecution?: DistributedExecutionConfig;
+  errorRecovery?: ErrorRecoveryConfig;
 }
 
 /**
@@ -156,6 +194,8 @@ export class Swarm {
    * Register default domain agents
    */
   private registerDefaultAgents(): void {
+    // Note: Most agents don't accept MessageQueue in constructor yet
+    // This is a forward-compatible setup - agents that need it can be updated
     const codeAgent = new CodeAgent(this.llm);
     const testAgent = new TestAgent(this.llm);
     const docAgent = new DocumentationAgent(this.llm);
@@ -165,6 +205,18 @@ export class Swarm {
     const accessibilityAgent = new AccessibilityAgent(this.llm);
     const databaseAgent = new DatabaseAgent(this.llm);
     const unitTestAgent = new UnitTestAgent(this.llm);
+
+    // Inject MessageQueue into agents that support it (via protected property)
+    // This is a workaround until all agents are updated to accept it in constructor
+    (codeAgent as any).messageQueue = this.messageQueue;
+    (testAgent as any).messageQueue = this.messageQueue;
+    (docAgent as any).messageQueue = this.messageQueue;
+    (mcpDiscoveryAgent as any).messageQueue = this.messageQueue;
+    (stylesheetAgent as any).messageQueue = this.messageQueue;
+    (errorDebuggingAgent as any).messageQueue = this.messageQueue;
+    (accessibilityAgent as any).messageQueue = this.messageQueue;
+    (databaseAgent as any).messageQueue = this.messageQueue;
+    (unitTestAgent as any).messageQueue = this.messageQueue;
 
     this.agentRegistry.register(codeAgent);
     this.agentRegistry.register(testAgent);

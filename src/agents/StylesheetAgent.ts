@@ -22,6 +22,11 @@ export class StylesheetAgent extends BaseAgent {
     logger.info(`StylesheetAgent executing task: ${task.id} - ${task.description}`);
 
     try {
+      // Check if LLM is available
+      if (!this.llm.isAvailable()) {
+        return this.createFailureResult(task.id, 'LLM provider is not available');
+      }
+
       const taskType = this.determineTaskType(task);
       
       switch (taskType) {

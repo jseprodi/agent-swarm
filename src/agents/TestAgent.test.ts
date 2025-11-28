@@ -59,10 +59,17 @@ describe('TestAgent', () => {
     });
 
     it('should handle errors gracefully', async () => {
-      mockLLM.setAvailable(false);
+      // Create a new mock LLM that's unavailable
+      const unavailableLLM = new MockLLMProvider(false);
+      // Ensure no default response can mask the error
+      unavailableLLM.setDefaultResponse({
+        content: '',
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      const errorAgent = new TestAgent(unavailableLLM);
       const task = createTestTask('Generate tests');
       
-      const result = await agent.execute(task);
+      const result = await errorAgent.execute(task);
       
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();

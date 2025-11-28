@@ -19,7 +19,8 @@ export class TaskManager {
     parentTaskId?: string,
     requiredCapabilities?: string[],
     requiredMCPServers?: string[],
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    addParentToDependencies: boolean = true
   ): Task {
     const task: Task = {
       id: uuidv4(),
@@ -33,11 +34,19 @@ export class TaskManager {
       updatedAt: new Date(),
     };
 
-    this.tasks.set(task.id, task);
-    
-    if (parentTaskId) {
-      this.addDependency(task.id, parentTaskId);
+    // Automatically add parent task to dependencies if parentTaskId is provided and flag is true
+    // Note: For Orchestrator subtasks, this should be false to avoid circular dependencies
+    // (subtasks should execute independently, parent waits for them, not vice versa)
+    if (parentTaskId && addParentToDependencies) {
+      if (!task.dependencies) {
+        task.dependencies = [];
+      }
+      if (!task.dependencies.includes(parentTaskId)) {
+        task.dependencies.push(parentTaskId);
+      }
     }
+
+    this.tasks.set(task.id, task);
 
     logger.info(`Created task: ${task.id} - ${description}`);
     return task;
@@ -357,6 +366,41 @@ export class TaskManager {
       inProgress: byStatus.in_progress,
       pending: byStatus.pending,
     };
+  }
+
+  /**
+   * Mark task for recovery
+   */
+  markTaskForRecovery(taskId: string): void {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      logger.warn(`Attempted to mark non-existent task for recovery: ${taskId}`);
+      return;
+    }
+
+    if (task.status !== 'failed') {
+      logger.warn(`Attempted to mark non-failed task for recovery: ${taskId}`);
+      return;
+    }
+
+    // Add recovery metadata
+    if (!task.metadata) {
+      task.metadata = {};
+    }
+    task.metadata.recoverable = true;
+    task.metadata.recoveryAttempts = (task.metadata.recoveryAttempts as number || 0) + 1;
+    task.status = 'pending'; // Reset to pending for retry
+
+    logger.info(`Task ${taskId} marked for recovery (attempt ${task.metadata.recoveryAttempts})`);
+  }
+
+  /**
+   * Get recoverable tasks
+   */
+  getRecoverableTasks(): Task[] {
+    return Array.from(this.tasks.values()).filter(
+      task => task.status === 'failed' && (task.metadata?.recoverable === true || task.metadata?.recoveryAttempts)
+    );
   }
 
   /**

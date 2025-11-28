@@ -2,7 +2,7 @@
  * BaseAgent unit tests
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BaseAgent } from './Agent.js';
 import { MockLLMProvider, MockMCPServerClient } from '../../__tests__/helpers/mocks.js';
 import { createTestTask } from '../../__tests__/helpers/factories.js';
@@ -195,6 +195,98 @@ describe('BaseAgent', () => {
       expect(result).toBeDefined();
       expect(result.taskId).toBe(task.id);
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('agent communication', () => {
+    let messageQueue: any;
+    
+    beforeEach(() => {
+      messageQueue = {
+        sendDirectMessage: vi.fn(),
+        requestResponse: vi.fn(),
+        registerAgentHandler: vi.fn(),
+        broadcast: vi.fn(),
+      };
+      (agent as any).messageQueue = messageQueue;
+    });
+
+    it('should send direct message to agent', () => {
+      (agent as any).sendMessageToAgent('target-agent', 'agent_message', { data: 'test' });
+      
+      expect(messageQueue.sendDirectMessage).toHaveBeenCalledWith(
+        'target-agent',
+        expect.objectContaining({
+          type: 'agent_message',
+          sourceAgentId: 'test-agent',
+        })
+      );
+    });
+
+    it('should handle missing MessageQueue gracefully', () => {
+      (agent as any).messageQueue = undefined;
+      
+      expect(() => {
+        (agent as any).sendMessageToAgent('target-agent', 'agent_message', {});
+      }).not.toThrow();
+    });
+
+    it('should request from agent', async () => {
+      const mockResponse = { type: 'agent_response', payload: { result: 'ok' } };
+      messageQueue.requestResponse.mockResolvedValue(mockResponse);
+      
+      const response = await (agent as any).requestFromAgent('target-agent', 'agent_request', {});
+      
+      expect(messageQueue.requestResponse).toHaveBeenCalled();
+      expect(response).toBe(mockResponse);
+    });
+
+    it('should throw when requesting without MessageQueue', async () => {
+      (agent as any).messageQueue = undefined;
+      
+      await expect(
+        (agent as any).requestFromAgent('target-agent', 'agent_request', {})
+      ).rejects.toThrow();
+    });
+
+    it('should subscribe to agent messages', () => {
+      const handler = vi.fn();
+      (agent as any).subscribeToAgentMessages('source-agent', 'agent_message', handler);
+      
+      expect(messageQueue.registerAgentHandler).toHaveBeenCalledWith(
+        'source-agent',
+        'agent_message',
+        handler
+      );
+    });
+
+    it('should respond to message', () => {
+      const originalMessage = {
+        id: 'msg-1',
+        sourceAgentId: 'source-agent',
+        correlationId: 'corr-1',
+      };
+      
+      (agent as any).respondToMessage(originalMessage, 'agent_response', { result: 'ok' });
+      
+      expect(messageQueue.sendDirectMessage).toHaveBeenCalledWith(
+        'source-agent',
+        expect.objectContaining({
+          type: 'agent_response',
+          correlationId: 'corr-1',
+        })
+      );
+    });
+
+    it('should broadcast message', () => {
+      (agent as any).broadcastMessage('broadcast_type', { data: 'test' });
+      
+      expect(messageQueue.broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'broadcast_type',
+          sourceAgentId: 'test-agent',
+        })
+      );
     });
   });
 });

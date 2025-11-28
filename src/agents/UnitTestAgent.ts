@@ -22,6 +22,11 @@ export class UnitTestAgent extends BaseAgent {
     logger.info(`UnitTestAgent executing task: ${task.id} - ${task.description}`);
 
     try {
+      // Check if LLM is available
+      if (!this.llm.isAvailable()) {
+        return this.createFailureResult(task.id, 'LLM provider is not available');
+      }
+
       // Build unit test generation prompt
       const unitTestPrompt = this.buildUnitTestPrompt(task);
       

@@ -45,7 +45,17 @@ describe('StylesheetAgent', () => {
     });
 
     it('should handle stylesheet analysis task', async () => {
-      const task = createTestTask('Analyze CSS for conflicts');
+      const task = createTestTask('Analyze CSS for conflicts', 'pending', {
+        metadata: {
+          stylesheetContent: '.container { display: flex; }',
+        },
+      });
+      
+      // Set default response for analysis
+      mockLLM.setDefaultResponse({
+        content: 'Analysis: Found 3 CSS conflicts in the stylesheet...',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       
@@ -54,7 +64,17 @@ describe('StylesheetAgent', () => {
     });
 
     it('should handle stylesheet optimization task', async () => {
-      const task = createTestTask('Optimize CSS file');
+      const task = createTestTask('Optimize CSS file', 'pending', {
+        metadata: {
+          stylesheetContent: '.container { display: flex; }',
+        },
+      });
+      
+      // Set default response for optimization
+      mockLLM.setDefaultResponse({
+        content: '```css\n.optimized { display: block; }\n```\n\nOptimized CSS...',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       
@@ -63,10 +83,17 @@ describe('StylesheetAgent', () => {
     });
 
     it('should handle errors gracefully', async () => {
-      mockLLM.setAvailable(false);
+      // Create a new mock LLM that's unavailable
+      const unavailableLLM = new MockLLMProvider(false);
+      // Ensure no default response can mask the error
+      unavailableLLM.setDefaultResponse({
+        content: '',
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      const errorAgent = new StylesheetAgent(unavailableLLM);
       const task = createTestTask('Generate stylesheet');
       
-      const result = await agent.execute(task);
+      const result = await errorAgent.execute(task);
       
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();

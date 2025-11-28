@@ -59,7 +59,17 @@ describe('ErrorDebuggingAgent', () => {
     });
 
     it('should execute error prevention task', async () => {
-      const task = createTestTask('Scan code for potential errors');
+      const task = createTestTask('Scan code for potential errors', 'pending', {
+        metadata: {
+          codeContent: 'function test() { return x; }',
+        },
+      });
+      
+      // Set default response for error prevention
+      mockLLM.setDefaultResponse({
+        content: 'Potential errors found: 1. Null pointer risk...',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       
@@ -68,10 +78,17 @@ describe('ErrorDebuggingAgent', () => {
     });
 
     it('should handle errors gracefully', async () => {
-      mockLLM.setAvailable(false);
+      // Create a new mock LLM that's unavailable
+      const unavailableLLM = new MockLLMProvider(false);
+      // Ensure no default response can mask the error
+      unavailableLLM.setDefaultResponse({
+        content: '',
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      const errorAgent = new ErrorDebuggingAgent(unavailableLLM);
       const task = createTestTask('Debug error');
       
-      const result = await agent.execute(task);
+      const result = await errorAgent.execute(task);
       
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();

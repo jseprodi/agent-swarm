@@ -10,6 +10,9 @@ export type MessageType =
   | 'mcp_discovery_request'
   | 'agent_ready'
   | 'agent_busy'
+  | 'agent_request'
+  | 'agent_response'
+  | 'agent_broadcast'
   | 'error';
 
 export interface Message {

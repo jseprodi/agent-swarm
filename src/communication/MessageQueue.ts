@@ -9,6 +9,8 @@ import logger from '../utils/logger.js';
 export class MessageQueue extends EventEmitter {
   private messages: Message[] = [];
   private maxHistory: number = 1000;
+  private agentHandlers: Map<string, Map<string, (message: Message) => void>> = new Map();
+  private pendingRequests: Map<string, { resolve: (message: Message) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }> = new Map();
 
   constructor() {
     super();
@@ -117,6 +119,101 @@ export class MessageQueue extends EventEmitter {
         resolve(null);
       }, timeout);
     });
+  }
+
+  /**
+   * Send direct message to a specific agent
+   */
+  sendDirectMessage(targetAgentId: string, message: Message): void {
+    message.targetAgentId = targetAgentId;
+    this.publish(message);
+
+    // Emit to agent-specific handler if registered
+    const handlers = this.agentHandlers.get(targetAgentId);
+    if (handlers) {
+      const handler = handlers.get(message.type);
+      if (handler) {
+        try {
+          handler(message);
+        } catch (error) {
+          logger.error(`Error in agent handler for ${targetAgentId}:`, error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Register agent-specific message handler
+   */
+  registerAgentHandler(agentId: string, messageType: MessageType, handler: (message: Message) => void): void {
+    if (!this.agentHandlers.has(agentId)) {
+      this.agentHandlers.set(agentId, new Map());
+    }
+    const handlers = this.agentHandlers.get(agentId)!;
+    handlers.set(messageType, handler);
+    logger.debug(`Registered handler for agent ${agentId}, message type ${messageType}`);
+  }
+
+  /**
+   * Unregister agent-specific message handler
+   */
+  unregisterAgentHandler(agentId: string, messageType: MessageType): void {
+    const handlers = this.agentHandlers.get(agentId);
+    if (handlers) {
+      handlers.delete(messageType);
+      if (handlers.size === 0) {
+        this.agentHandlers.delete(agentId);
+      }
+    }
+  }
+
+  /**
+   * Request/response pattern - send message and wait for response
+   */
+  async requestResponse(
+    targetAgentId: string,
+    message: Message,
+    timeout: number = 30000
+  ): Promise<Message> {
+    const correlationId = message.correlationId || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    message.correlationId = correlationId;
+    message.targetAgentId = targetAgentId;
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(correlationId);
+        reject(new Error(`Request timeout after ${timeout}ms`));
+      }, timeout);
+
+      this.pendingRequests.set(correlationId, { resolve, reject, timeout: timeoutId });
+
+      // Subscribe to response messages
+      const responseHandler = (response: Message) => {
+        if (response.correlationId === correlationId && response.sourceAgentId === targetAgentId) {
+          this.unsubscribe('agent_response', responseHandler);
+          const pending = this.pendingRequests.get(correlationId);
+          if (pending) {
+            clearTimeout(pending.timeout);
+            this.pendingRequests.delete(correlationId);
+            resolve(response);
+          }
+        }
+      };
+
+      this.subscribe('agent_response', responseHandler);
+
+      // Send the request
+      this.sendDirectMessage(targetAgentId, message);
+    });
+  }
+
+  /**
+   * Broadcast message to all agents
+   */
+  broadcast(message: Message): void {
+    message.targetAgentId = undefined; // No specific target
+    this.publish(message);
+    logger.debug(`Broadcast message: ${message.type}`);
   }
 }
 

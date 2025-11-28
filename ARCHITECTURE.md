@@ -540,12 +540,112 @@ Used for:
 3. Connect when needed
 4. Use via agent MCP clients
 
+## Implemented Enhancements
+
+### Agent-to-Agent Direct Communication
+
+Agents can now communicate directly with each other without going through the orchestrator.
+
+**Components:**
+- Extended `MessageQueue` with `sendDirectMessage()`, `requestResponse()`, and `registerAgentHandler()`
+- Added communication methods to `BaseAgent`: `sendMessageToAgent()`, `requestFromAgent()`, `subscribeToAgentMessages()`, `respondToMessage()`, `broadcastMessage()`
+- New message types: `agent_request`, `agent_response`, `agent_broadcast`
+
+**Usage:**
+```typescript
+// Send direct message
+this.sendMessageToAgent('target-agent-id', 'agent_request', { data: 'value' });
+
+// Request/response pattern
+const response = await this.requestFromAgent('target-agent-id', 'agent_request', { data: 'value' });
+```
+
+### Distributed Agent Execution
+
+Foundation for distributed execution across multiple nodes.
+
+**Components:**
+- `DistributedExecutor` - Remote agent proxy and task dispatcher
+- `NodeManager` - Node discovery and health checking
+- `NodeRegistry` - Registry of available nodes
+
+**Note:** Full network transport implementation is pending. The infrastructure is in place for HTTP/WebSocket transport.
+
+### Advanced Caching Strategies
+
+Multi-level caching for LLM responses, task results, and agent computations.
+
+**Components:**
+- `CacheManager` - Base cache infrastructure with `MemoryCache`, `FileCache`, and `MultiLevelCache`
+- `LLMCache` - Specialized caching for LLM responses with hit/miss tracking
+- `TaskCache` - Caching for task execution results
+- `CachedLLMProvider` - Wrapper that adds caching to any LLM provider
+
+**Configuration:**
+```typescript
+const swarm = new Swarm({
+  caching: {
+    enabled: true,
+    llmCache: { enabled: true, ttl: 3600000, maxSize: 500 },
+    taskCache: { enabled: true, ttl: 1800000 },
+    storage: 'hybrid',
+    cacheDirectory: 'data/cache',
+  },
+});
+```
+
+### Performance Monitoring and Metrics
+
+Comprehensive performance monitoring, metrics collection, and observability.
+
+**Components:**
+- `MetricsCollector` - Central metrics registry with Counter, Gauge, Histogram, and Timer
+- `MetricsStore` - Time-series storage and aggregation
+- `HealthMonitor` - System health monitoring with component health checks
+
+**Metrics Types:**
+- Counters: Task success/failure, agent operations
+- Gauges: Current values (subtask count, agent availability)
+- Histograms: Value distributions
+- Timers: Execution durations
+
+**API Endpoints:**
+- `GET /api/stats/metrics` - All metrics
+- `GET /api/stats/metrics/agents` - Agent-specific metrics
+- `GET /api/stats/metrics/tasks` - Task performance metrics
+- `GET /api/stats/metrics/llm` - LLM usage metrics
+- `GET /api/stats/health` - Enhanced health check
+
+### Enhanced Error Recovery
+
+Sophisticated error recovery mechanisms including retry strategies, fallback agents, circuit breakers, and error pattern learning.
+
+**Components:**
+- `ErrorRecoveryManager` - Coordinates error recovery strategies
+- `RetryStrategy` - Exponential backoff, fixed interval, and adaptive retry policies
+- `CircuitBreaker` - Prevents cascading failures with open/closed/half-open states
+- `ErrorPatternAnalyzer` - Analyzes error patterns for predictive recovery
+
+**Configuration:**
+```typescript
+const swarm = new Swarm({
+  errorRecovery: {
+    enabled: true,
+    maxRetries: 3,
+    retryStrategy: 'exponential',
+    circuitBreaker: {
+      enabled: true,
+      failureThreshold: 5,
+      recoveryTimeout: 60000,
+    },
+    fallbackAgents: true,
+  },
+});
+```
+
 ## Future Enhancements
 
-- Agent-to-agent direct communication
-- Distributed agent execution
-- Advanced caching strategies
-- Performance monitoring and metrics
-- Enhanced error recovery
 - Agent learning and adaptation
+- Full network transport implementation for distributed execution
+- Advanced error pattern learning with ML
 

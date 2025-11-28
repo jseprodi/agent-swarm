@@ -26,6 +26,11 @@ export class MockLLMProvider extends BaseLLMProvider {
   }
 
   async requestCompletion(request: LLMRequest): Promise<LLMResponse> {
+    // Explicit check - throw error if available is false
+    if (!this.available) {
+      throw new Error('LLM provider is not available');
+    }
+    
     const key = `${request.prompt.substring(0, 50)}_${request.temperature || 0.7}`;
     const response = this.responses.get(key) || this.defaultResponse;
     // If it's a decomposition request, return JSON
@@ -175,6 +180,154 @@ export class MockAgent implements Agent {
 
   setExecuteError(error: Error): void {
     this.executeError = error;
+  }
+}
+
+/**
+ * Mock Metrics Collector
+ */
+export class MockMetricsCollector {
+  private counters: Map<string, number> = new Map();
+  private gauges: Map<string, number> = new Map();
+  private histograms: Map<string, number[]> = new Map();
+
+  counter(name: string, labels?: Record<string, string>) {
+    const key = this.getKey(name, labels);
+    return {
+      inc: (amount: number = 1) => {
+        this.counters.set(key, (this.counters.get(key) || 0) + amount);
+      },
+      getValue: () => this.counters.get(key) || 0,
+      reset: () => this.counters.delete(key),
+    };
+  }
+
+  gauge(name: string, labels?: Record<string, string>) {
+    const key = this.getKey(name, labels);
+    return {
+      set: (value: number) => this.gauges.set(key, value),
+      getValue: () => this.gauges.get(key) || 0,
+    };
+  }
+
+  histogram(name: string, labels?: Record<string, string>) {
+    const key = this.getKey(name, labels);
+    return {
+      observe: (value: number) => {
+        const values = this.histograms.get(key) || [];
+        values.push(value);
+        this.histograms.set(key, values);
+      },
+      getStats: () => ({
+        count: (this.histograms.get(key) || []).length,
+        sum: (this.histograms.get(key) || []).reduce((a, b) => a + b, 0),
+        mean: 0,
+        min: 0,
+        max: 0,
+        percentiles: {},
+      }),
+    };
+  }
+
+  private getKey(name: string, labels?: Record<string, string>): string {
+    if (!labels) return name;
+    const labelStr = Object.entries(labels).sort().map(([k, v]) => `${k}=${v}`).join(',');
+    return `${name}{${labelStr}}`;
+  }
+}
+
+/**
+ * Mock Cache
+ */
+export class MockCache<T = unknown> {
+  private cache: Map<string, T> = new Map();
+
+  get(key: string): T | undefined {
+    return this.cache.get(key);
+  }
+
+  set(key: string, value: T): void {
+    this.cache.set(key, value);
+  }
+
+  has(key: string): boolean {
+    return this.cache.has(key);
+  }
+
+  delete(key: string): boolean {
+    return this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  size(): number {
+    return this.cache.size;
+  }
+}
+
+/**
+ * Mock Health Monitor
+ */
+export class MockHealthMonitor {
+  private status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+
+  getStatus(): 'healthy' | 'degraded' | 'unhealthy' {
+    return this.status;
+  }
+
+  setStatus(status: 'healthy' | 'degraded' | 'unhealthy'): void {
+    this.status = status;
+  }
+
+  performHealthCheck() {
+    return {
+      status: this.status,
+      timestamp: Date.now(),
+      components: [],
+      summary: {
+        agents: { total: 0, available: 0, busy: 0 },
+        mcpServers: { total: 0, connected: 0, error: 0 },
+        tasks: { total: 0, completed: 0, failed: 0, inProgress: 0 },
+      },
+    };
+  }
+}
+
+/**
+ * Mock Error Recovery Manager
+ */
+export class MockErrorRecoveryManager {
+  async recoverTask(task: any, error: Error, agent: any, fallbacks: any[]): Promise<any> {
+    // Mock implementation
+    return null;
+  }
+
+  classifyError(error: Error): any {
+    return {
+      type: 'transient',
+      shouldRetry: true,
+      recoveryStrategy: 'retry',
+    };
+  }
+}
+
+/**
+ * Mock Node Manager
+ */
+export class MockNodeManager {
+  private nodes: Map<string, any> = new Map();
+
+  registerNode(node: any): void {
+    this.nodes.set(node.id, node);
+  }
+
+  getRegistry(): any {
+    return {
+      getAllNodes: () => Array.from(this.nodes.values()),
+      getOnlineNodes: () => Array.from(this.nodes.values()).filter((n: any) => n.status === 'online'),
+    };
   }
 }
 

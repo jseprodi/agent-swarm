@@ -9,18 +9,24 @@ import { MockLLMProvider } from '../../__tests__/helpers/mocks.js';
 import { createTestTask } from '../../__tests__/helpers/factories.js';
 import { createTestMCPServer } from '../../__tests__/helpers/factories.js';
 
-// Mock MCPManager methods
-vi.mock('../mcp/MCPManager.js', () => {
-  return {
-    MCPManager: vi.fn().mockImplementation(() => ({
-      getRegistry: vi.fn().mockReturnValue({
+// Mock MCPManager - use actual implementation but mock its methods
+vi.mock('../mcp/MCPManager.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../mcp/MCPManager.js')>();
+  const MockMCPManager = class extends actual.MCPManager {
+    constructor() {
+      super();
+    }
+    
+    getRegistry() {
+      return {
         getAllServers: vi.fn().mockReturnValue([]),
-      }),
-      addServer: vi.fn(),
-      connectServer: vi.fn().mockResolvedValue({
-        isConnected: vi.fn().mockReturnValue(true),
-      }),
-    })),
+      };
+    }
+  };
+  
+  return {
+    ...actual,
+    MCPManager: MockMCPManager,
   };
 });
 

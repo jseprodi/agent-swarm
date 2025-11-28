@@ -50,7 +50,17 @@ describe('AccessibilityAgent', () => {
     });
 
     it('should execute accessibility implementation task', async () => {
-      const task = createTestTask('Implement ARIA labels for buttons');
+      const task = createTestTask('Implement ARIA labels for buttons', 'pending', {
+        metadata: {
+          htmlContent: '<button>Submit</button>',
+        },
+      });
+      
+      // Mock LLM response for implementation
+      mockLLM.setDefaultResponse({
+        content: 'Accessibility implementation: <button aria-label="Submit">Submit</button>',
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      });
       
       const result = await agent.execute(task);
       

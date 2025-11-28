@@ -81,3 +81,60 @@ export function createTestTasks(count: number, descriptionPrefix: string = 'Test
   );
 }
 
+/**
+ * Create a test metric
+ */
+export function createTestMetric(
+  name: string = 'test_metric',
+  type: 'counter' | 'gauge' | 'histogram' | 'timer' = 'counter',
+  value: number = 10,
+  labels?: Record<string, string>
+) {
+  return {
+    name,
+    type,
+    value,
+    timestamp: Date.now(),
+    labels,
+  };
+}
+
+/**
+ * Create a test cache entry
+ */
+export function createTestCacheEntry<T = unknown>(
+  key: string = 'test-key',
+  value: T = 'test-value' as T
+) {
+  return { key, value };
+}
+
+/**
+ * Create a test node
+ */
+export function createTestNode(
+  id: string = 'node-1',
+  url: string = 'http://localhost:3000',
+  status: 'online' | 'offline' | 'error' = 'online'
+) {
+  return {
+    id,
+    url,
+    status,
+    lastSeen: Date.now(),
+    agents: [],
+  };
+}
+
+/**
+ * Create a test error
+ */
+export function createTestError(
+  message: string = 'Test error',
+  name: string = 'Error'
+): Error {
+  const error = new Error(message);
+  error.name = name;
+  return error;
+}
+

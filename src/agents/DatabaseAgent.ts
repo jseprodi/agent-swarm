@@ -4,11 +4,11 @@
 
 import { BaseAgent } from '../core/Agent.js';
 import type { Task, TaskResult } from '../core/types.js';
-import { LLMIntegration } from '../cursor/LLMIntegration.js';
+import type { ILLMProvider } from '../llm/types.js';
 import logger from '../utils/logger.js';
 
 export class DatabaseAgent extends BaseAgent {
-  constructor(llm?: LLMIntegration) {
+  constructor(llm?: ILLMProvider) {
     super(
       'database-agent',
       'Database Agent',
@@ -22,6 +22,11 @@ export class DatabaseAgent extends BaseAgent {
     logger.info(`DatabaseAgent executing task: ${task.id} - ${task.description}`);
 
     try {
+      // Check if LLM is available
+      if (!this.llm.isAvailable()) {
+        return this.createFailureResult(task.id, 'LLM provider is not available');
+      }
+
       // Build database-specific prompt
       const databasePrompt = this.buildDatabasePrompt(task);
       
@@ -141,11 +146,12 @@ Format your response with code blocks and clear explanations.`;
     // Detect the type of database operation
     const lowerDesc = description.toLowerCase();
 
+    // Check for migration first (before schema/table)
+    if (lowerDesc.includes('migration') || lowerDesc.includes('migrate') || (lowerDesc.includes('alter') && !lowerDesc.includes('create'))) {
+      return 'migration';
+    }
     if (lowerDesc.includes('schema') || lowerDesc.includes('table') || lowerDesc.includes('create table')) {
       return 'schema_design';
-    }
-    if (lowerDesc.includes('migration') || lowerDesc.includes('migrate') || lowerDesc.includes('alter')) {
-      return 'migration';
     }
     if (lowerDesc.includes('query') || lowerDesc.includes('select') || lowerDesc.includes('insert') || lowerDesc.includes('update') || lowerDesc.includes('delete')) {
       return 'query';

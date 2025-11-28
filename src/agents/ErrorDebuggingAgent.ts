@@ -35,6 +35,11 @@ export class ErrorDebuggingAgent extends BaseAgent {
     logger.info(`ErrorDebuggingAgent executing task: ${task.id} - ${task.description}`);
 
     try {
+      // Check if LLM is available
+      if (!this.llm.isAvailable()) {
+        return this.createFailureResult(task.id, 'LLM provider is not available');
+      }
+
       const taskType = this.determineTaskType(task);
       
       switch (taskType) {
