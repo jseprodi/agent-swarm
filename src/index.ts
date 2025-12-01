@@ -21,7 +21,7 @@ import { ErrorDebuggingAgent } from './agents/ErrorDebuggingAgent.js';
 import { AccessibilityAgent } from './agents/AccessibilityAgent.js';
 import { DatabaseAgent } from './agents/DatabaseAgent.js';
 import { UnitTestAgent } from './agents/UnitTestAgent.js';
-import type { Task, TaskResult, DynamicAgentConfig } from './core/types.js';
+import type { TaskResult, DynamicAgentConfig } from './core/types.js';
 import logger from './utils/logger.js';
 
 export type LLMProviderType = 'cursor' | 'openai' | 'anthropic';
@@ -71,6 +71,7 @@ export interface SwarmConfig {
   caching?: CachingConfig;
   distributedExecution?: DistributedExecutionConfig;
   errorRecovery?: ErrorRecoveryConfig;
+  orchestratorTimeout?: number; // Timeout in milliseconds for orchestrator task execution
 }
 
 /**
@@ -83,10 +84,11 @@ export class Swarm {
   private mcpManager: MCPManager;
   private llm: ILLMProvider;
   private orchestrator: Orchestrator;
-  private config: SwarmConfig;
+  // @ts-expect-error - Config stored for potential future runtime configuration updates
+  private _config: SwarmConfig;
 
   constructor(config: SwarmConfig = {}) {
-    this.config = config;
+    this._config = config;
 
     // Set log level if provided
     if (config.logLevel) {
@@ -113,7 +115,9 @@ export class Swarm {
       this.mcpManager,
       this.llm,
       undefined, // maxConcurrentTasks
-      config.dynamicAgents
+      config.dynamicAgents,
+      undefined, // metricsCollector
+      config.orchestratorTimeout
     );
 
     // Register orchestrator

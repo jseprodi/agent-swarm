@@ -30,9 +30,27 @@ export class CursorLLMProvider extends BaseLLMProvider {
   async requestCompletion(request: LLMRequest): Promise<LLMResponse> {
     if (!this.isCursorContext) {
       logger.warn('Not running in Cursor context - LLM requests will be placeholders');
-      // Return a placeholder response
+      // Return a placeholder response with valid JSON structure for common prompts
+      const promptLower = request.prompt.toLowerCase();
+      let placeholderContent = '[]'; // Default to empty array for JSON responses
+      
+      // Try to provide better placeholder responses based on prompt type
+      if (promptLower.includes('json array') || promptLower.includes('respond with a json array')) {
+        placeholderContent = '[]';
+      } else if (promptLower.includes('json object') || promptLower.includes('respond with a json')) {
+        placeholderContent = '{}';
+      } else if (promptLower.includes('subtasks') || promptLower.includes('break it down')) {
+        // For task decomposition, return a simple single-subtask structure
+        placeholderContent = JSON.stringify({
+          subtasks: [{ description: request.prompt.split('\n')[0] || 'Complete the task', agent: 'code-agent', dependencies: [] }],
+          reasoning: 'Placeholder decomposition - would use LLM in actual Cursor context'
+        });
+      } else {
+        placeholderContent = '[]';
+      }
+      
       return {
-        content: '[LLM response would be generated here in Cursor context]',
+        content: placeholderContent,
         model: 'cursor-default',
       };
     }
@@ -47,9 +65,25 @@ export class CursorLLMProvider extends BaseLLMProvider {
       
       logger.info(`LLM request: ${request.prompt.substring(0, 100)}...`);
       
-      // Placeholder implementation
+      // Placeholder implementation - return valid JSON for structured responses
+      const promptLower = request.prompt.toLowerCase();
+      let placeholderContent = '[]';
+      
+      if (promptLower.includes('json array') || promptLower.includes('respond with a json array')) {
+        placeholderContent = '[]';
+      } else if (promptLower.includes('json object') || promptLower.includes('respond with a json')) {
+        placeholderContent = '{}';
+      } else if (promptLower.includes('subtasks') || promptLower.includes('break it down')) {
+        placeholderContent = JSON.stringify({
+          subtasks: [{ description: request.prompt.split('\n')[0] || 'Complete the task', agent: 'code-agent', dependencies: [] }],
+          reasoning: 'Placeholder decomposition - would use LLM in actual Cursor context'
+        });
+      } else {
+        placeholderContent = '[]';
+      }
+      
       return {
-        content: `[LLM response for: ${request.prompt.substring(0, 50)}...]`,
+        content: placeholderContent,
         usage: {
           promptTokens: request.prompt.length / 4, // Rough estimate
           completionTokens: 100,

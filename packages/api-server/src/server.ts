@@ -39,13 +39,19 @@ let swarmInstance: Swarm | null = null;
 
 function getSwarm(): Swarm {
   if (!swarmInstance) {
-    const llmProvider = (process.env.LLM_PROVIDER as LLMProviderType | undefined) || 'cursor';
+    // Default to OpenAI if no provider specified, since Cursor provider doesn't work in standalone mode
+    const llmProvider = (process.env.LLM_PROVIDER as LLMProviderType | undefined) || 'openai';
     
     // Validate LLM provider type
     const validProviders: LLMProviderType[] = ['cursor', 'openai', 'anthropic'];
     const provider: LLMProviderType = validProviders.includes(llmProvider) 
       ? llmProvider 
-      : 'cursor';
+      : 'openai';
+    
+    // Warn if using Cursor provider in standalone mode
+    if (provider === 'cursor') {
+      logger.warn('Cursor LLM provider selected, but it only works in Cursor\'s integrated runtime. Consider using "openai" or "anthropic" for standalone API servers.');
+    }
     
     swarmInstance = new Swarm({
       enableHealthChecks: true,

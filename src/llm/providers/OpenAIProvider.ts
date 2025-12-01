@@ -16,7 +16,8 @@ export class OpenAIProvider extends BaseLLMProvider {
   constructor(config: LLMProviderConfig = {}) {
     super();
     this.config = config;
-    this.model = config.model || 'gpt-4-turbo-preview';
+    // Default to gpt-4o (or gpt-3.5-turbo as fallback) - more widely available than gpt-4-turbo-preview
+    this.model = config.model || 'gpt-4o';
 
     if (config.apiKey || process.env.OPENAI_API_KEY) {
       try {

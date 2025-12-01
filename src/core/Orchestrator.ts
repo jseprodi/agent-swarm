@@ -3,7 +3,7 @@
  */
 
 import { BaseAgent } from './Agent.js';
-import type { Agent, Task, TaskResult, TaskDecomposition } from './types.js';
+import type { Task, TaskResult, TaskDecomposition } from './types.js';
 import { TaskManager } from './TaskManager.js';
 import type { ILLMProvider } from '../llm/types.js';
 import { MessageQueue } from '../communication/MessageQueue.js';
@@ -20,15 +20,16 @@ import { v4 as uuidv4 } from 'uuid';
 
 export class Orchestrator extends BaseAgent {
   private taskManager: TaskManager;
-  private messageQueue: MessageQueue;
+  protected messageQueue: MessageQueue;
   private agentRegistry: AgentRegistry;
   private mcpManager: MCPManager;
   private mcpDiscoveryAgent: MCPDiscoveryAgent;
-  private agentFactory: AgentFactory;
+  private agentFactory?: AgentFactory;
   private dynamicAgentConfig: DynamicAgentConfig;
   private createdAgentsCount: number = 0;
   private isProcessing: boolean = false;
   private readonly maxConcurrentTasks: number;
+  private readonly executionTimeoutMs: number;
 
   constructor(
     taskManager: TaskManager,
@@ -38,7 +39,8 @@ export class Orchestrator extends BaseAgent {
     llm?: ILLMProvider,
     maxConcurrentTasks?: number,
     dynamicAgentConfig?: DynamicAgentConfig,
-    metricsCollector?: MetricsCollector
+    metricsCollector?: MetricsCollector,
+    executionTimeoutMs?: number
   ) {
     super(
       'orchestrator',
@@ -55,6 +57,7 @@ export class Orchestrator extends BaseAgent {
     this.mcpManager = mcpManager;
     this.mcpDiscoveryAgent = new MCPDiscoveryAgent(mcpManager, llm);
     this.maxConcurrentTasks = maxConcurrentTasks || 10; // Default to 10 concurrent tasks
+    this.executionTimeoutMs = executionTimeoutMs || 60000; // Default to 60 seconds
 
     // Initialize dynamic agent configuration
     this.dynamicAgentConfig = dynamicAgentConfig || {
@@ -76,6 +79,8 @@ export class Orchestrator extends BaseAgent {
         llm || this.llm,
         this.dynamicAgentConfig.persistenceDirectory
       );
+    } else {
+      this.agentFactory = undefined;
     }
 
     // Subscribe to task completion messages
@@ -93,33 +98,42 @@ export class Orchestrator extends BaseAgent {
 
     this.isProcessing = true;
     const overallTimer = this.metricsCollector?.timer('orchestrator_task_execution_time');
+    const executionStartTime = Date.now();
+    let currentStep = 'initialization';
 
-    // Add overall timeout to prevent hanging (15 seconds max - must be less than test timeout)
-    const MAX_EXECUTION_TIME_MS = 15000;
     const executionPromise = (async () => {
       try {
         // Step 1: Ensure MCP servers are available
+        currentStep = 'MCP server setup';
         const mcpTimer = this.metricsCollector?.timer('orchestrator_mcp_setup_time');
         await this.ensureMCPServers(task);
         mcpTimer?.record(Date.now() - (mcpTimer as any).startTime || 0);
 
         // Step 2: Decompose the task
+        currentStep = 'task decomposition';
         const decompositionTimer = this.metricsCollector?.timer('orchestrator_task_decomposition_time');
         const decomposition = await decompositionTimer?.time(() => this.decomposeTask(task)) || await this.decomposeTask(task);
 
         // Step 3: Create subtasks
+        currentStep = 'subtask creation';
         const subtasks = this.createSubtasks(task, decomposition);
         if (this.metricsCollector) {
           this.metricsCollector.gauge('orchestrator_subtasks_count').set(subtasks.length);
         }
 
         // Step 4: Execute subtasks in order
+        currentStep = 'subtask execution';
+        logger.info(`Starting subtask execution for ${subtasks.length} subtasks`);
         const executionTimer = this.metricsCollector?.timer('orchestrator_subtask_execution_time');
         const results = await executionTimer?.time(() => this.executeSubtasks(subtasks)) || await this.executeSubtasks(subtasks);
+        logger.info(`Subtask execution completed, collected ${results.size} results`);
 
         // Step 5: Synthesize results
+        currentStep = 'result synthesis';
+        logger.info(`Starting result synthesis for task ${task.id} with ${results.size} results`);
         const synthesisTimer = this.metricsCollector?.timer('orchestrator_result_synthesis_time');
         const synthesizedResult = await synthesisTimer?.time(() => this.synthesizeResults(task, results)) || await this.synthesizeResults(task, results);
+        logger.info(`Result synthesis completed for task ${task.id}`);
 
         if (this.metricsCollector) {
           this.metricsCollector.counter('orchestrator_tasks_completed').inc();
@@ -128,26 +142,38 @@ export class Orchestrator extends BaseAgent {
         return synthesizedResult;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error(`Orchestrator error:`, error);
+        logger.error(`Orchestrator error during ${currentStep}:`, error);
         if (this.metricsCollector) {
           this.metricsCollector.counter('orchestrator_tasks_failed').inc();
         }
-        return this.createFailureResult(task.id, errorMessage);
+        return this.createFailureResult(task.id, `Error during ${currentStep}: ${errorMessage}`);
       } finally {
         this.isProcessing = false;
         overallTimer?.record(Date.now() - (overallTimer as any).startTime || 0);
       }
     })();
 
-    const timeoutPromise = new Promise<TaskResult>((resolve) => 
-      setTimeout(() => {
-        logger.error(`Orchestrator execution timeout for task ${task.id}`);
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<TaskResult>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        const elapsedTime = Date.now() - executionStartTime;
+        logger.error(`Orchestrator execution timeout for task ${task.id} after ${elapsedTime}ms. Last step: ${currentStep}`);
         this.isProcessing = false;
-        resolve(this.createFailureResult(task.id, 'Execution timeout'));
-      }, MAX_EXECUTION_TIME_MS)
-    );
+        resolve(this.createFailureResult(task.id, `Execution timeout after ${elapsedTime}ms during ${currentStep}`));
+      }, this.executionTimeoutMs);
+    });
 
-    return Promise.race([executionPromise, timeoutPromise]);
+    // Race the promises and clear timeout if execution completes first
+    return Promise.race([
+      executionPromise.then(result => {
+        // Clear timeout if execution completes successfully
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        return result;
+      }),
+      timeoutPromise
+    ]);
   }
 
   /**
@@ -217,8 +243,8 @@ export class Orchestrator extends BaseAgent {
   private async decomposeTask(task: Task): Promise<TaskDecomposition> {
     logger.info(`Decomposing task: ${task.id}`);
 
-    // Get available agents
-    const availableAgents = this.agentRegistry.getAvailableAgents();
+    // Get available agents (exclude orchestrator - it shouldn't be assigned to subtasks)
+    const availableAgents = this.agentRegistry.getAvailableAgents().filter(a => a.id !== 'orchestrator');
     const agentMetadata = availableAgents.map(agent => ({
       id: agent.id,
       capabilities: agent.capabilities,
@@ -372,7 +398,7 @@ export class Orchestrator extends BaseAgent {
   /**
    * Create subtasks from decomposition
    */
-  private createSubtasks(task: Task, decomposition: TaskDecomposition): Task[] {
+  private createSubtasks(_task: Task, decomposition: TaskDecomposition): Task[] {
     return decomposition.tasks;
   }
 
@@ -387,23 +413,67 @@ export class Orchestrator extends BaseAgent {
 
     // Execute tasks level by level, with parallel execution within each level
     for (const level of taskLevels) {
-      logger.info(`Executing ${level.length} tasks in parallel at dependency level ${taskLevels.indexOf(level) + 1}`);
+      const levelIndex = taskLevels.indexOf(level) + 1;
+      logger.info(`Executing ${level.length} tasks in parallel at dependency level ${levelIndex}`);
 
       // Execute all tasks at this level in parallel (with concurrency limit)
-      const levelPromises = level.map(taskId => this.executeSingleTask(taskId, results));
+      const levelPromises = level.map(taskId => {
+        logger.debug(`Creating promise for task ${taskId}`);
+        return this.executeSingleTask(taskId, results);
+      });
       
+      logger.debug(`Waiting for ${levelPromises.length} tasks at level ${levelIndex} to complete`);
       // Limit concurrent execution to avoid overwhelming the system
       if (levelPromises.length > this.maxConcurrentTasks) {
         // Execute in batches
         for (let i = 0; i < levelPromises.length; i += this.maxConcurrentTasks) {
           const batch = levelPromises.slice(i, i + this.maxConcurrentTasks);
-          await Promise.allSettled(batch);
+          logger.debug(`Executing batch ${Math.floor(i / this.maxConcurrentTasks) + 1} with ${batch.length} tasks`);
+          const batchResults = await Promise.allSettled(batch);
+          logger.debug(`Batch completed: ${batchResults.filter(r => r.status === 'fulfilled').length} fulfilled, ${batchResults.filter(r => r.status === 'rejected').length} rejected`);
         }
       } else {
-        await Promise.allSettled(levelPromises);
+        const levelResults = await Promise.allSettled(levelPromises);
+        logger.info(`Level ${levelIndex} completed: ${levelResults.filter(r => r.status === 'fulfilled').length} fulfilled, ${levelResults.filter(r => r.status === 'rejected').length} rejected`);
+      }
+      logger.info(`Completed level ${levelIndex}, results map now has ${results.size} entries`);
+    }
+
+    logger.info(`Finished executing all subtask levels, total results collected: ${results.size}`);
+
+    // Validate that all subtask results are collected
+    const missingResults: string[] = [];
+    for (const subtask of subtasks) {
+      if (!results.has(subtask.id)) {
+        missingResults.push(subtask.id);
+        // Check if result exists in TaskManager as fallback
+        const taskResult = this.taskManager.getResult(subtask.id);
+        if (taskResult) {
+          results.set(subtask.id, taskResult);
+          logger.debug(`Retrieved missing result for subtask ${subtask.id} from TaskManager`);
+        } else {
+          logger.warn(`No result found for subtask ${subtask.id} after execution`);
+        }
       }
     }
 
+    if (missingResults.length > 0) {
+      const stillMissing = missingResults.filter(id => !results.has(id));
+      if (stillMissing.length > 0) {
+        logger.warn(`Missing results for ${stillMissing.length} subtasks after execution: ${stillMissing.join(', ')}`);
+        // Create error results for missing subtasks
+        for (const taskId of stillMissing) {
+          const errorResult = {
+            taskId,
+            success: false,
+            error: 'Subtask execution did not produce a result',
+          };
+          results.set(taskId, errorResult);
+        }
+      }
+    }
+
+    logger.info(`Collected results for ${results.size} of ${subtasks.length} subtasks`);
     return results;
   }
 
@@ -489,7 +559,7 @@ export class Orchestrator extends BaseAgent {
     if (!agent && this.dynamicAgentConfig.enabled && this.agentFactory) {
       logger.info(`No suitable agent found for task ${subtask.id}, attempting to create specialized agent`);
       try {
-        agent = await this.createAgentForTask(subtask.description, subtask);
+        agent = await this.createAgentForTask(subtask.description, subtask) || undefined;
         if (agent) {
           logger.info(`Created and selected new agent ${agent.id} for task ${subtask.id}`);
         }
@@ -519,8 +589,10 @@ export class Orchestrator extends BaseAgent {
 
     try {
       const result = await agent.execute(subtask);
+      logger.debug(`Task ${subtask.id} execution completed, storing result`);
       results.set(subtask.id, result);
       this.taskManager.storeResult(result);
+      logger.debug(`Result stored for task ${subtask.id} in results map (size: ${results.size})`);
 
       // Publish completion message
       this.messageQueue.publish({
@@ -530,6 +602,7 @@ export class Orchestrator extends BaseAgent {
         timestamp: new Date(),
         sourceAgentId: agent.id,
       });
+      logger.debug(`Completion message published for task ${subtask.id}`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Error executing task ${subtask.id}:`, error);
@@ -552,17 +625,23 @@ export class Orchestrator extends BaseAgent {
     // Check if task has a preferred agent ID in metadata (from decomposition)
     if (task.metadata?.preferredAgentId) {
       const preferredAgentId = task.metadata.preferredAgentId as string;
-      const preferredAgent = this.agentRegistry.getAgent(preferredAgentId);
-      if (preferredAgent) {
-        // Check if agent is available using the registry's method
-        const availableAgents = this.agentRegistry.getAvailableAgents();
-        if (availableAgents.some(a => a.id === preferredAgentId)) {
-          return preferredAgent;
-        } else {
-          logger.debug(`Preferred agent ${preferredAgentId} exists but is not available`);
-        }
+      
+      // Never assign subtasks to the orchestrator itself
+      if (preferredAgentId === 'orchestrator') {
+        logger.warn(`Preferred agent is orchestrator, ignoring and selecting alternative agent`);
       } else {
-        logger.debug(`Preferred agent ${preferredAgentId} not found in registry`);
+        const preferredAgent = this.agentRegistry.getAgent(preferredAgentId);
+        if (preferredAgent) {
+          // Check if agent is available using the registry's method
+          const availableAgents = this.agentRegistry.getAvailableAgents();
+          if (availableAgents.some(a => a.id === preferredAgentId)) {
+            return preferredAgent;
+          } else {
+            logger.debug(`Preferred agent ${preferredAgentId} exists but is not available`);
+          }
+        } else {
+          logger.debug(`Preferred agent ${preferredAgentId} not found in registry`);
+        }
       }
     }
 
@@ -643,44 +722,60 @@ export class Orchestrator extends BaseAgent {
     task: Task,
     results: Map<string, TaskResult>
   ): Promise<TaskResult> {
-    // Handle empty results - this can happen if all subtasks failed to execute
-    if (results.size === 0) {
-      logger.warn(`No results to synthesize for task ${task.id} - all subtasks may have failed`);
-      return this.createFailureResult(task.id, 'No subtasks were executed successfully');
+    try {
+      logger.info(`Synthesizing results for task ${task.id}, results map size: ${results.size}`);
+      
+      // Handle empty results - this can happen if all subtasks failed to execute
+      if (results.size === 0) {
+        logger.warn(`No results to synthesize for task ${task.id} - all subtasks may have failed`);
+        return this.createFailureResult(task.id, 'No subtasks were executed successfully');
+      }
+
+      const allSuccessful = Array.from(results.values()).every(r => r.success);
+      
+      if (!allSuccessful) {
+        const failures = Array.from(results.values()).filter(r => !r.success);
+        logger.warn(`Task ${task.id} completed with ${failures.length} failures`);
+      }
+
+      logger.info(`Processing ${results.size} results for synthesis`);
+      
+      // Combine all result data
+      const combinedData = {
+        subtasks: Array.from(results.entries()).map(([taskId, result]) => ({
+          taskId,
+          success: result.success,
+          data: result.data,
+          error: result.error,
+        })),
+        summary: {
+          total: results.size,
+          successful: Array.from(results.values()).filter(r => r.success).length,
+          failed: Array.from(results.values()).filter(r => !r.success).length,
+        },
+      };
+
+      logger.info(`Creating success result for task ${task.id}`);
+      const synthesizedResult = this.createSuccessResult(task.id, combinedData, {
+        allSuccessful,
+        subtaskCount: results.size,
+      });
+      
+      logger.info(`Result synthesis completed for task ${task.id}, returning result`);
+      return synthesizedResult;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error during result synthesis for task ${task.id}:`, error);
+      return this.createFailureResult(task.id, `Result synthesis failed: ${errorMessage}`);
     }
-
-    const allSuccessful = Array.from(results.values()).every(r => r.success);
-    
-    if (!allSuccessful) {
-      const failures = Array.from(results.values()).filter(r => !r.success);
-      logger.warn(`Task ${task.id} completed with ${failures.length} failures`);
-    }
-
-    // Combine all result data
-    const combinedData = {
-      subtasks: Array.from(results.entries()).map(([taskId, result]) => ({
-        taskId,
-        success: result.success,
-        data: result.data,
-        error: result.error,
-      })),
-      summary: {
-        total: results.size,
-        successful: Array.from(results.values()).filter(r => r.success).length,
-        failed: Array.from(results.values()).filter(r => !r.success).length,
-      },
-    };
-
-    return this.createSuccessResult(task.id, combinedData, {
-      allSuccessful,
-      subtaskCount: results.size,
-    });
   }
 
   /**
    * Determine execution order of tasks
+   * @deprecated This method is currently unused but reserved for future dependency-based task ordering
    */
-  private determineExecutionOrder(tasks: Task[]): string[] {
+  // @ts-expect-error - Reserved for future use
+  private determineExecutionOrder(_tasks: Task[]): string[] {
     // Simple topological sort based on dependencies
     const order: string[] = [];
     const visited = new Set<string>();
@@ -707,7 +802,7 @@ export class Orchestrator extends BaseAgent {
       order.push(taskId);
     };
 
-    for (const task of tasks) {
+    for (const task of _tasks) {
       visit(task.id);
     }
 
@@ -719,7 +814,7 @@ export class Orchestrator extends BaseAgent {
    */
   private topologicalSort(
     tasks: Task[],
-    dependencies: Map<string, string[]>
+    _dependencies: Map<string, string[]>
   ): string[] {
     return this.taskManager.buildDecomposition(tasks[0]?.parentTaskId || tasks[0]?.id || '')
       .estimatedExecutionOrder;
@@ -910,6 +1005,9 @@ export class Orchestrator extends BaseAgent {
         };
 
       // Create the agent
+      if (!this.agentFactory) {
+        throw new Error('Agent factory not initialized. Dynamic agents must be enabled.');
+      }
       const agent = await this.agentFactory.createDynamicAgent(
         specification,
         persistenceOptions
